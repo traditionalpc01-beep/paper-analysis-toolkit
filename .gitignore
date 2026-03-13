@@ -1,7 +1,57 @@
+# Python
 __pycache__/
-*.pyc
-.DS_Store
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
 venv/
-.venv/
-示例数据/pdfs/*.pdf
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Output files
 输出结果/*.xlsx
+输出结果/*.docx
+输出结果/*.md
+输出结果/*.json
+输出结果/*.log
+
+# Sample PDFs (keep directory structure but ignore files)
+示例数据/pdfs/*.pdf
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+
+# Playwright
+.playwright-cli/
