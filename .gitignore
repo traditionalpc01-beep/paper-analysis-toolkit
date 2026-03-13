@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+venv/
+.venv/
+示例数据/pdfs/*.pdf
+输出结果/*.xlsx
