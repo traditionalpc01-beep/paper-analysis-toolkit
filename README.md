@@ -33,6 +33,20 @@ pip install -r requirements.txt
 python 脚本/analyze_papers.py
 ```
 
+如果系统提示找不到 `python` 命令（Mac/Linux 常见），请改用：
+
+```bash
+python3 脚本/analyze_papers.py
+```
+
+常用参数示例：
+
+```bash
+# 递归扫描子目录 + 限制每篇最多读取前5页（加速）
+# 同时导出 JSON/CSV + 缺失项报告（Markdown/Word）
+python3 脚本/analyze_papers.py --recursive --max-pages 5 --export-json --export-csv --export-md --export-docx
+```
+
 ### 4. 查看结果
 
 分析完成后，结果将保存在 `输出结果/` 目录下，文件名格式为 `论文分析报告_时间戳.xlsx`。
@@ -67,6 +81,37 @@ python 脚本/analyze_papers.py \
   --pdf-dir /your/path/to/pdfs \
   --output-dir /your/path/to/output
 ```
+
+### 扫描子目录 / 限制读取页数（加速）
+
+```bash
+# 递归扫描子目录中的 PDF
+python 脚本/analyze_papers.py --pdf-dir /your/path/to/pdfs --recursive
+
+# 每篇最多读取前 N 页（0 表示不限制）
+python 脚本/analyze_papers.py --max-pages 5
+```
+
+### 导出 JSON / CSV（可选）
+
+```bash
+python 脚本/analyze_papers.py --export-json --export-csv
+```
+
+### 导出缺失项报告（Markdown / Word）
+
+缺失项报告会逐篇列出哪些字段为空，并对关键指标（EQE/CIE/寿命）给出缺失原因：
+- 文章类型原因（综述/理论/非器件性能类论文可能不适用）
+- 更可能文章确实没有/未给出（未发现相关指标关键词）
+- 文本提及但未提取（可能格式不同，需要补规则）
+
+```bash
+python3 脚本/analyze_papers.py --export-md --export-docx
+```
+
+输出文件名示例：
+- `输出结果/论文缺失项报告_时间戳.md`
+- `输出结果/论文缺失项报告_时间戳.docx`
 
 ### 添加期刊影响因子
 
@@ -145,6 +190,15 @@ patterns = [
 
 ## 📄 版本历史
 
+- **v1.3** (2026-03-13)
+  - 新增缺失项报告导出：Markdown（`--export-md`）与 Word（`--export-docx/--export-word`）
+  - 缺失项报告会逐篇标注关键指标缺失原因（文章类型原因 vs 更可能未给出）
+- **v1.2** (2026-03-13)
+  - 支持递归扫描 PDF（`--recursive`），并兼容 `.PDF` 等大小写扩展名
+  - 支持限制每篇论文读取页数（`--max-pages`），用于加速
+  - 支持可选导出 JSON/CSV（`--export-json` / `--export-csv`）
+  - 期刊识别改为优先基于“影响因子库”自动匹配（含常见缩写）
+  - 标题/作者提取增加 PDF 元数据兜底与更稳的规则
 - **v1.1** (2026-03-13)
   - 修复工作目录导致的路径错误
   - 支持 `--help` 和目录参数

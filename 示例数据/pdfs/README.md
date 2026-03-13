@@ -3,7 +3,7 @@
 ## 使用说明
 
 1. 将待分析的PDF论文文件放入此目录
-2. 确保PDF文件扩展名为 `.pdf`（小写）
+2. PDF文件扩展名支持 `.pdf` / `.PDF` 等大小写
 3. 运行分析脚本后，结果将保存在 `../输出结果/` 目录
 
 ## 文件命名建议
@@ -37,4 +37,9 @@ Nature Communications - 2024 - Li - Efficient Perovskite Solar Cells.pdf
 ```bash
 cd ../../脚本
 python analyze_papers.py
+```
+
+如果系统提示找不到 `python` 命令，请改用：
+```bash
+python3 analyze_papers.py
 ```
