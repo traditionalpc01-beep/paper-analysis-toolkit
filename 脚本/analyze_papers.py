@@ -2,8 +2,9 @@
 """
 PDF论文分析工具 - 主脚本
 功能：自动提取PDF论文中的关键信息并生成Excel报告
+支持 PaddleOCR 文本识别，适用于扫描版PDF
 作者：WorkBuddy AI Assistant
-版本：v1.3
+版本：v1.4
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ import openpyxl
 import pdfplumber
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+
+from ocr_engine import create_ocr_engine, OCREngine
 
 # ============================================================================
 # 配置区域
@@ -191,6 +194,29 @@ def parse_args():
         action="store_true",
         help="除 Excel 外，同时导出 Word(.docx) 缺失项报告到输出目录。",
     )
+    parser.add_argument(
+        "--use-ocr",
+        action="store_true",
+        default=False,
+        help="使用 PaddleOCR 进行文本提取（强制模式）。",
+    )
+    parser.add_argument(
+        "--no-ocr",
+        action="store_true",
+        help="禁用 OCR，使用 pdfplumber 提取文本（适用于有文本层的PDF）。",
+    )
+    parser.add_argument(
+        "--ocr-lang",
+        type=str,
+        default="en",
+        choices=["en", "ch", "japan", "korean", "fr", "de", "ru"],
+        help="OCR 识别语言，默认: en",
+    )
+    parser.add_argument(
+        "--enable-hpi",
+        action="store_true",
+        help="启用 PaddleOCR 高性能推理模式（需要额外安装依赖）。",
+    )
     return parser.parse_args()
 
 
@@ -216,14 +242,26 @@ def iter_pdf_files(pdf_path_or_dir: Path, recursive: bool = False) -> list[Path]
     return pdfs
 
 
-def extract_pdf_text(pdf_path: Path, max_pages: Optional[int] = None):
+def extract_pdf_text(
+    pdf_path: Path,
+    max_pages: Optional[int] = None,
+    ocr_engine: Optional[OCREngine] = None,
+):
     """提取PDF文本与元数据
+
+    Args:
+        pdf_path: PDF文件路径
+        max_pages: 最大读取页数
+        ocr_engine: OCR引擎实例（如果提供则使用OCR模式）
 
     返回: (full_text, front_text, metadata)
       - full_text: 多页拼接后的全文（可能受 max_pages 限制）
-      - front_text: 第一段可用的“前置信息页”文本（用于期刊/标题/作者识别）
+      - front_text: 第一段可用的"前置信息页"文本（用于期刊/标题/作者识别）
       - metadata: PDF 元数据（若存在）
     """
+    if ocr_engine is not None:
+        return ocr_engine.extract_text_from_pdf(pdf_path, max_pages)
+
     try:
         with pdfplumber.open(pdf_path) as pdf:
             metadata = pdf.metadata or {}
@@ -876,14 +914,14 @@ def analyze_missing_items(result, paper_type, full_text, front_text):
     return missing_items
 
 
-def analyze_pdf_record(pdf_path, impact_factors, max_pages: Optional[int] = None):
+def analyze_pdf_record(pdf_path, impact_factors, max_pages: Optional[int] = None, ocr_engine=None):
     """分析单个PDF文件，返回:
     - result: 用于 Excel/JSON/CSV 的结果 dict（成功时）
     - record: 用于 MD/DOCX 缺失项报告的诊断信息（始终返回）
     """
     print(f"\n分析: {pdf_path.name}")
 
-    text, front_text, metadata = extract_pdf_text(pdf_path, max_pages=max_pages)
+    text, front_text, metadata = extract_pdf_text(pdf_path, max_pages=max_pages, ocr_engine=ocr_engine)
     if not text:
         print("  警告: 未提取到文本（可能是扫描版PDF或无文本层）。")
         record = {
@@ -1307,8 +1345,19 @@ def main():
         use_existing_json=use_existing_json,
     )
 
+    ocr_engine = None
+    use_ocr = args.use_ocr and not args.no_ocr
+    if use_ocr:
+        print("\n[OCR] 启用 PaddleOCR 文本提取模式")
+        ocr_engine = create_ocr_engine(
+            lang=args.ocr_lang,
+            enable_hpi=args.enable_hpi,
+        )
+    else:
+        print("\n[INFO] 使用 pdfplumber 提取文本（可通过 --use-ocr 启用OCR）")
+
     print("="*70)
-    print(" PDF论文分析工具 v1.3")
+    print(" PDF论文分析工具 v1.4 (OCR增强版)")
     print("="*70)
     
     # 创建输出目录
@@ -1332,7 +1381,7 @@ def main():
     records = []
     for i, pdf_file in enumerate(pdf_files, 1):
         print(f"\n[{i}/{len(pdf_files)}]", end='')
-        result, record = analyze_pdf_record(pdf_file, impact_factors, max_pages=max_pages)
+        result, record = analyze_pdf_record(pdf_file, impact_factors, max_pages=max_pages, ocr_engine=ocr_engine)
         records.append(record)
         if result:
             results.append(result)

@@ -4,6 +4,10 @@
 # PDF处理
 pdfplumber>=0.7.0
 
+# OCR识别（扫描版PDF支持）
+paddlepaddle>=3.0.0
+paddleocr>=3.0.0
+
 # Excel文件处理
 openpyxl>=3.1.0
 
