@@ -1,27 +1,55 @@
-# PDF论文分析工具 - 依赖包
+# PaperInsight CLI - 依赖包
 # 安装命令: pip install -r requirements.txt
 
-# PDF处理
+# ============================================================
+# 核心依赖
+# ============================================================
+
+# CLI 框架
+typer>=0.9.0
+rich>=13.0.0
+
+# PDF 处理
+PyMuPDF>=1.23.0
 pdfplumber>=0.7.0
-
-# OCR识别（扫描版PDF支持）
-paddlepaddle>=3.0.0
-paddleocr>=3.0.0
-
-# Excel文件处理
-openpyxl>=3.1.0
-
-# Word文档处理（可选）
-python-docx>=1.0.0
 
 # 数据处理
 pandas>=2.0.0
+openpyxl>=3.1.0
 
-# 正则表达式（Python内置，无需安装）
-# re
+# 配置管理
+pyyaml>=6.0
 
-# 路径处理（Python内置，无需安装）
-# pathlib
+# 网络请求
+requests>=2.31.0
 
-# JSON处理（Python内置，无需安装）
-# json
+# 进度展示
+tqdm>=4.66.0
+
+# 环境变量
+python-dotenv>=1.0.0
+
+# ============================================================
+# 可选依赖 - OCR
+# ============================================================
+# 安装: pip install -r requirements.txt -r requirements-ocr.txt
+
+# paddlepaddle>=3.0.0
+# paddleocr>=3.0.0
+
+# ============================================================
+# 可选依赖 - LLM
+# ============================================================
+# 安装: pip install -r requirements.txt -r requirements-llm.txt
+
+# openai>=1.0.0
+
+# ============================================================
+# 开发依赖
+# ============================================================
+# 安装: pip install -r requirements.txt -r requirements-dev.txt
+
+# pytest>=7.0.0
+# black>=23.0.0
+# flake8>=6.0.0
+# mypy>=1.0.0

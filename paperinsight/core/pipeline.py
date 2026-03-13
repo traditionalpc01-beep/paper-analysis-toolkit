@@ -1,0 +1,305 @@
+"""
+分析管线模块
+功能: 主处理流程
+"""
+
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Union
+
+from tqdm import tqdm
+
+from paperinsight.core.cache import CacheManager
+from paperinsight.core.extractor import DataExtractor
+from paperinsight.core.reporter import ReportGenerator
+from paperinsight.ocr.baidu_api import BaiduOCRAPI
+from paperinsight.ocr.local import LocalOCR
+from paperinsight.utils.hash_utils import calculate_md5
+from paperinsight.utils.logger import ErrorLogger, setup_logger
+from paperinsight.utils.pdf_utils import PDFProcessor, extract_text_with_fallback
+from paperinsight.web.impact_factor_search import ImpactFactorSearcher
+
+
+class AnalysisPipeline:
+    """分析管线"""
+    
+    def __init__(
+        self,
+        output_dir: Union[str, Path],
+        cache_dir: Union[str, Path] = ".cache",
+        use_baidu_ocr: bool = False,
+        baidu_api_key: Optional[str] = None,
+        baidu_secret_key: Optional[str] = None,
+        use_llm: bool = False,
+        llm_client=None,
+        use_web_search: bool = False,
+        enable_cache: bool = True,
+    ):
+        """
+        初始化分析管线
+        
+        Args:
+            output_dir: 输出目录
+            cache_dir: 缓存目录
+            use_baidu_ocr: 是否使用百度 OCR API
+            baidu_api_key: 百度 API Key
+            baidu_secret_key: 百度 Secret Key
+            use_llm: 是否使用 LLM
+            llm_client: LLM 客户端
+            use_web_search: 是否使用 Web 搜索补全 IF
+            enable_cache: 是否启用缓存
+        """
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.cache_dir = Path(cache_dir)
+        self.enable_cache = enable_cache
+        
+        # 初始化缓存管理器
+        self.cache_manager = CacheManager(self.cache_dir) if enable_cache else None
+        
+        # 初始化 OCR 引擎
+        self.ocr_engine = None
+        if use_baidu_ocr and baidu_api_key and baidu_secret_key:
+            try:
+                self.ocr_engine = BaiduOCRAPI(
+                    api_key=baidu_api_key,
+                    secret_key=baidu_secret_key,
+                )
+                print("[OCR] 使用百度 OCR API")
+            except Exception as e:
+                print(f"[警告] 百度 OCR 初始化失败: {e}, 将使用本地 OCR")
+                self.ocr_engine = LocalOCR()
+        elif use_baidu_ocr:
+            print("[警告] 未提供百度 API Key, 将使用本地 OCR")
+            self.ocr_engine = LocalOCR()
+        
+        # 初始化数据提取器
+        self.extractor = DataExtractor(
+            llm=llm_client,
+            use_llm=use_llm,
+        )
+        
+        # 初始化 Web 搜索器
+        self.if_searcher = ImpactFactorSearcher() if use_web_search else None
+        
+        # 初始化报告生成器
+        self.reporter = ReportGenerator(self.output_dir)
+        
+        # 初始化错误日志记录器
+        self.error_logger = ErrorLogger(self.output_dir)
+        
+        # 初始化日志记录器
+        self.logger = setup_logger("paperinsight.pipeline")
+    
+    def process_pdf(
+        self,
+        pdf_path: Path,
+        max_pages: Optional[int] = None,
+        use_cache: bool = True,
+    ) -> Optional[dict]:
+        """
+        处理单个 PDF 文件
+        
+        Args:
+            pdf_path: PDF 文件路径
+            max_pages: 最大读取页数
+            use_cache: 是否使用缓存
+        
+        Returns:
+            提取结果(如果成功)
+        """
+        pdf_name = pdf_path.name
+        md5 = calculate_md5(pdf_path) if self.enable_cache else ""
+        
+        # 检查缓存
+        if self.enable_cache and use_cache and self.cache_manager.has_data_cache(md5):
+            self.logger.info(f"[缓存命中] {pdf_name}")
+            return self.cache_manager.load_data_cache(md5)
+        
+        try:
+            # 提取文本
+            if self.ocr_engine:
+                # 使用 OCR
+                ocr_text = None
+                if self.enable_cache and use_cache:
+                    ocr_text = self.cache_manager.load_ocr_cache(md5)
+                
+                if ocr_text is None:
+                    full_text, front_text, metadata = self.ocr_engine.extract_text_from_pdf(
+                        pdf_path, max_pages
+                    )
+                    if full_text and self.enable_cache:
+                        self.cache_manager.save_ocr_cache(md5, full_text)
+                else:
+                    full_text = ocr_text
+                    front_text = ocr_text.split("\n\n")[0] if ocr_text else ""
+                    metadata = {}
+            else:
+                # 使用 PyMuPDF
+                with PDFProcessor(pdf_path) as processor:
+                    full_text, front_text, metadata = processor.extract_text(max_pages)
+            
+            # 如果没有文本,跳过
+            if not full_text:
+                self.logger.warning(f"[跳过] {pdf_name}: 未提取到文本")
+                return None
+            
+            # 提取结构化数据
+            result = self.extractor.extract(full_text, front_text, metadata)
+            
+            # 添加文件信息
+            result["File"] = pdf_name
+            result["URL"] = pdf_path.resolve().as_uri()
+            
+            # 补全影响因子
+            if self.if_searcher and not result.get("影响因子"):
+                journal_name = result.get("journal_name", "")
+                if journal_name and journal_name != "未知期刊":
+                    if_value = self.if_searcher.search_impact_factor(journal_name)
+                    if if_value:
+                        result["影响因子"] = if_value
+            
+            # 保存缓存
+            if self.enable_cache:
+                self.cache_manager.save_data_cache(md5, result)
+            
+            return result
+        
+        except Exception as e:
+            self.logger.error(f"[错误] {pdf_name}: {e}")
+            self.error_logger.log_error(pdf_name, e, context="PDF 处理")
+            return None
+    
+    def process_batch(
+        self,
+        pdf_files: list[Path],
+        max_pages: Optional[int] = None,
+        use_cache: bool = True,
+    ) -> tuple[list[dict], list[dict]]:
+        """
+        批量处理 PDF 文件
+        
+        Args:
+            pdf_files: PDF 文件列表
+            max_pages: 最大读取页数
+            use_cache: 是否使用缓存
+        
+        Returns:
+            (成功结果列表, 错误列表)
+        """
+        results = []
+        errors = []
+        
+        for pdf_path in tqdm(pdf_files, desc="处理 PDF"):
+            try:
+                result = self.process_pdf(pdf_path, max_pages, use_cache)
+                if result:
+                    results.append(result)
+                else:
+                    # 处理失败但没有抛出异常的情况
+                    error_info = {
+                        "pdf_name": pdf_path.name,
+                        "error_type": "ProcessingError",
+                        "error_message": "未能从PDF中提取有效数据",
+                        "context": "PDF处理",
+                    }
+                    errors.append(error_info)
+                    self.error_logger.log_error(
+                        pdf_path.name,
+                        Exception("未能从PDF中提取有效数据"),
+                        context="PDF处理"
+                    )
+            except Exception as e:
+                # 捕获所有异常并记录
+                error_info = {
+                    "pdf_name": pdf_path.name,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "context": "PDF处理",
+                }
+                errors.append(error_info)
+                self.error_logger.log_error(pdf_path.name, e, context="PDF处理")
+                self.logger.error(f"[批量处理错误] {pdf_path.name}: {e}")
+        
+        return results, errors
+    
+    def run(
+        self,
+        pdf_dir: Union[str, Path],
+        recursive: bool = False,
+        max_pages: Optional[int] = None,
+        use_cache: bool = True,
+        generate_excel: bool = True,
+        generate_json: bool = False,
+    ) -> dict:
+        """
+        运行分析管线
+        
+        Args:
+            pdf_dir: PDF 目录
+            recursive: 是否递归扫描
+            max_pages: 最大读取页数
+            use_cache: 是否使用缓存
+            generate_excel: 是否生成 Excel
+            generate_json: 是否生成 JSON
+        
+        Returns:
+            运行统计信息
+        """
+        pdf_dir = Path(pdf_dir)
+        
+        # 收集 PDF 文件
+        if recursive:
+            pdf_files = list(pdf_dir.rglob("*.pdf"))
+        else:
+            pdf_files = list(pdf_dir.glob("*.pdf"))
+        
+        # 过滤非文件
+        pdf_files = [f for f in pdf_files if f.is_file()]
+        
+        self.logger.info(f"找到 {len(pdf_files)} 个 PDF 文件")
+        
+        if not pdf_files:
+            self.logger.warning("未找到 PDF 文件")
+            return {"status": "no_files", "pdf_count": 0}
+        
+        # 批量处理
+        results, errors = self.process_batch(pdf_files, max_pages, use_cache)
+        
+        # 生成报告
+        report_files = {}
+        
+        if generate_excel and results:
+            excel_path = self.reporter.generate_excel_report(results)
+            report_files["excel"] = str(excel_path)
+        
+        if generate_json and results:
+            json_path = self.reporter.generate_json_report(results)
+            report_files["json"] = str(json_path)
+        
+        # 保存错误日志
+        if errors or self.error_logger.errors:
+            error_log_path = self.error_logger.save()
+            if error_log_path:
+                report_files["error_log"] = str(error_log_path)
+        
+        # 统计信息
+        stats = {
+            "status": "completed",
+            "pdf_count": len(pdf_files),
+            "success_count": len(results),
+            "error_count": len(pdf_files) - len(results),
+            "report_files": report_files,
+            "timestamp": datetime.now().isoformat(),
+        }
+        
+        # 输出统计
+        self.logger.info("=" * 70)
+        self.logger.info("处理完成!")
+        self.logger.info(f"总文件数: {len(pdf_files)}")
+        self.logger.info(f"成功: {len(results)}")
+        self.logger.info(f"失败: {len(pdf_files) - len(results)}")
+        self.logger.info("=" * 70)
+        
+        return stats

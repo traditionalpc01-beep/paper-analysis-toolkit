@@ -1,214 +1,320 @@
-# PDF论文分析工具包
+# PaperInsight CLI
 
-## 📖 简介
+智能科研论文分析工具 - 自动提取 PDF 论文关键信息并生成报告
 
-这是一个用于自动分析PDF学术论文并提取关键信息的Python工具包。该工具能够从PDF文件中自动提取以下信息：
+版本: 2.0.0
 
-- 期刊名称和影响因子
-- 论文标题和作者
-- 器件结构
-- 优化层级和策略
-- EQE（外量子效率）
-- CIE色度坐标
-- 器件寿命
-- 其他补充信息
+## 功能特点
 
-最终生成一份按影响因子排序的Excel报告，便于快速了解论文质量和研究成果。
+- 自动提取期刊名称、标题、作者等信息
+- 支持百度 OCR API 进行扫描版 PDF 识别
+- 集成 LLM 进行语义提取(支持 OpenAI、DeepSeek)
+- 自动补全期刊影响因子(支持 Web 搜索)
+- 智能缓存系统,支持断点续传
+- 生成按影响因子排序的 Excel 报告
+- 支持多器件参数提取和数据溯源
 
-## 🚀 快速开始
+## 快速开始
 
-### 1. 安装依赖
+### 1. 安装
 
 ```bash
+# 克隆仓库
+git clone https://github.com/yourusername/paperinsight.git
+cd paperinsight
+
+# 安装核心依赖
 pip install -r requirements.txt
+
+# 可选: 安装 OCR 支持
+pip install paddlepaddle paddleocr
+
+# 可选: 安装 LLM 支持
+pip install openai
+
+# 安装项目
+pip install -e .
 ```
 
-### 2. 准备PDF文件
-
-将待分析的PDF文件放入 `示例数据/pdfs/` 目录下。
-
-### 3. 运行分析
+### 2. 基本使用
 
 ```bash
-python 脚本/analyze_papers.py
+# 分析 PDF 目录
+paperinsight analyze ./pdfs
+
+# 递归扫描子目录
+paperinsight analyze ./pdfs --recursive
+
+# 指定输出目录
+paperinsight analyze ./pdfs --output ./reports
+
+# 使用智能 API 模式
+paperinsight analyze ./pdfs --mode api
+
+# 同时导出 JSON 报告
+paperinsight analyze ./pdfs --json
 ```
 
-如果系统提示找不到 `python` 命令（Mac/Linux 常见），请改用：
+### 3. 配置 API Key
+
+首次使用智能 API 模式时,会自动启动配置向导:
 
 ```bash
-python3 脚本/analyze_papers.py
+paperinsight analyze ./pdfs --mode api
 ```
 
-常用参数示例：
+或手动配置:
 
 ```bash
-# 递归扫描子目录 + 限制每篇最多读取前5页（加速）
-# 同时导出 JSON/CSV + 缺失项报告（Markdown/Word）
-python3 脚本/analyze_papers.py --recursive --max-pages 5 --export-json --export-csv --export-md --export-docx
+paperinsight config
 ```
 
-### 4. 查看结果
+配置文件位于 `~/.paperinsight/config.yaml`
 
-分析完成后，结果将保存在 `输出结果/` 目录下，文件名格式为 `论文分析报告_时间戳.xlsx`。
+## 运行模式
 
-## 📁 目录结构
+### 基础正则模式 (默认)
 
-```
-论文分析工具包/
-├── README.md                   # 使用说明文档
-├── requirements.txt            # Python依赖包列表
-├── 脚本/                       # 核心脚本目录
-│   ├── analyze_papers.py      # 主分析脚本
-├── 配置文件/                   # 配置文件目录
-│   └── journal_impact_factors.json  # 期刊影响因子数据库
-├── 示例数据/                   # 示例数据目录
-│   └── pdfs/                  # PDF文件存放目录
-├── 输出结果/                   # 分析结果输出目录
-└── 使用文档/                   # 详细使用文档
-    ├── 快速开始指南.md
-    ├── 高级配置说明.md
-    └── 常见问题解答.md
-```
+- 使用正则表达式提取信息
+- 无需 API Key
+- 速度快,准确度适中
 
-## ⚙️ 配置说明
+### 智能 API 模式
 
-### 修改PDF目录
-
-推荐直接通过命令行参数传入：
+- 调用百度 OCR API 进行高精度识别
+- 调用 LLM 进行语义提取
+- 需要配置 API Key
+- 准确度高,消耗 API 额度
 
 ```bash
-python 脚本/analyze_papers.py \
-  --pdf-dir /your/path/to/pdfs \
-  --output-dir /your/path/to/output
+paperinsight analyze ./pdfs --mode api
 ```
 
-### 扫描子目录 / 限制读取页数（加速）
+## 提取字段
 
-```bash
-# 递归扫描子目录中的 PDF
-python 脚本/analyze_papers.py --pdf-dir /your/path/to/pdfs --recursive
-
-# 每篇最多读取前 N 页（0 表示不限制）
-python 脚本/analyze_papers.py --max-pages 5
-```
-
-### 导出 JSON / CSV（可选）
-
-```bash
-python 脚本/analyze_papers.py --export-json --export-csv
-```
-
-### 导出缺失项报告（Markdown / Word）
-
-缺失项报告会逐篇列出哪些字段为空，并对关键指标（EQE/CIE/寿命）给出缺失原因：
-- 文章类型原因（综述/理论/非器件性能类论文可能不适用）
-- 更可能文章确实没有/未给出（未发现相关指标关键词）
-- 文本提及但未提取（可能格式不同，需要补规则）
-
-```bash
-python3 脚本/analyze_papers.py --export-md --export-docx
-```
-
-输出文件名示例：
-- `输出结果/论文缺失项报告_时间戳.md`
-- `输出结果/论文缺失项报告_时间戳.docx`
-
-### 添加期刊影响因子
-
-优先编辑 `配置文件/journal_impact_factors.json`，脚本会在启动时自动加载：
-
-```json
-{
-  "自定义期刊": {
-    "Your Journal Name": {
-      "impact_factor": 15.5,
-      "category": "Materials Science"
-    }
-  }
-}
-```
-
-如需只使用脚本内置期刊库，可添加 `--no-json` 参数。
-
-## 📊 输出格式
-
-生成的Excel文件包含以下列：
-
-| 列名 | 说明 |
+| 字段 | 说明 |
 |------|------|
-| File | PDF文件名 |
-| URL | 文件路径 |
-| 期刊名称 | 发表的期刊 |
-| 影响因子 | 期刊IF值（2023-2024） |
-| 作者 | 前3位作者 |
-| 论文标题 | 论文标题 |
-| 器件结构 | 器件各层材料 |
-| 优化层级 | 优化层面 |
-| 优化策略 | 具体优化方法 |
-| EQE（外量子效率） | 器件EQE值 |
-| 色度坐标 | CIE坐标 |
-| 寿命 | T50或lifetime |
-| 补充信息 | 波长、亮度等 |
+| 期刊名称 | 从首页或页眉页脚提取 |
+| 影响因子 | 优先匹配 PDF 原文,其次通过 Web 查询 |
+| 论文标题 | 识别第一页最大字号文本 |
+| 作者 | 最多列出前 3 位 |
+| 器件结构 | 识别层级堆叠结构 |
+| EQE | 外量子效率(支持多器件) |
+| CIE | 色度坐标(支持多器件) |
+| 寿命 | T50/LT50(支持多器件) |
+| 数据溯源 | 附带原文出处句子 |
+| 优化层级和策略 | 总结优化方法(约 100 字) |
 
-## 🎯 适用场景
+## 命令参考
 
-本工具特别适用于以下研究领域的论文分析：
+### analyze
 
-- 量子点发光二极管（QLED）
-- 钙钛矿太阳能电池
-- 有机发光器件（OLED）
-- 其他光电材料和器件
+分析 PDF 论文
 
-## ⚠️ 注意事项
+```bash
+paperinsight analyze PDF_DIR [OPTIONS]
 
-1. **PDF质量**：确保PDF文件包含可提取的文本（非扫描版）
-2. **期刊识别**：如期刊未被识别，将显示"未知期刊"，影响因子为0
-3. **数据准确性**：自动提取的数据建议人工核对
-4. **文件命名**：建议使用规范的文件命名（如：期刊 - 年份 - 作者 - 标题.pdf）
-
-## 🔧 高级功能
-
-### 批量处理
-
-工具支持批量处理大量PDF文件，建议单次处理不超过100个文件。
-
-### 自定义提取规则
-
-可以在脚本中修改正则表达式模式，以适应不同的论文格式：
-
-```python
-# 修改EQE提取模式
-patterns = [
-    r'EQE[^0-9<≥>]*?([0-9]+\.?[0-9]*)\s*%',
-    # 添加您的自定义模式
-]
+选项:
+  --output, -o PATH    输出目录
+  --recursive, -r      递归扫描子目录
+  --max-pages INT      最大读取页数(0 表示不限制)
+  --mode, -m TEXT      运行模式: auto, api, regex
+  --no-cache           禁用缓存
+  --json               同时导出 JSON 报告
 ```
 
-## 📞 技术支持
+### config
 
-如有问题或建议，请联系开发团队。
+配置 API Key
 
-## 📄 版本历史
+```bash
+paperinsight config
+```
 
-- **v1.3** (2026-03-13)
-  - 新增缺失项报告导出：Markdown（`--export-md`）与 Word（`--export-docx/--export-word`）
-  - 缺失项报告会逐篇标注关键指标缺失原因（文章类型原因 vs 更可能未给出）
-- **v1.2** (2026-03-13)
-  - 支持递归扫描 PDF（`--recursive`），并兼容 `.PDF` 等大小写扩展名
-  - 支持限制每篇论文读取页数（`--max-pages`），用于加速
-  - 支持可选导出 JSON/CSV（`--export-json` / `--export-csv`）
-  - 期刊识别改为优先基于“影响因子库”自动匹配（含常见缩写）
-  - 标题/作者提取增加 PDF 元数据兜底与更稳的规则
-- **v1.1** (2026-03-13)
-  - 修复工作目录导致的路径错误
-  - 支持 `--help` 和目录参数
-  - 自动加载 JSON 期刊配置
-  - 使用标准 `file://` URI 输出本地文件链接
-- **v1.0** (2026-03-13)
-  - 初始版本发布
-  - 支持基本的PDF信息提取
-  - 支持期刊识别和影响因子匹配
-  - 支持按影响因子排序
+### cache-info
+
+显示缓存信息
+
+```bash
+paperinsight cache-info
+```
+
+### clear-cache
+
+清除所有缓存
+
+```bash
+paperinsight clear-cache
+```
+
+### version
+
+显示版本信息
+
+```bash
+paperinsight version
+```
+
+## 环境检查
+
+### 快速检查
+
+```bash
+# 快速检查必要条件
+paperinsight check
+
+# 完整环境诊断
+paperinsight doctor
+```
+
+### 启动时自动检查
+
+启动脚本会自动检测运行环境:
+
+1. **检查 Python 环境**: 确保版本 >= 3.8
+2. **检查网络连接**: 判断是否可以使用在线 API
+3. **检查依赖完整性**: 确保核心依赖已安装
+4. **检查本地 OCR**: 判断是否可以处理扫描版 PDF
+
+### 离线模式
+
+当检测到无法联网时:
+
+1. 如果本地 PaddleOCR 已安装 → 使用本地 OCR 处理
+2. 如果本地 OCR 不可用 → 仅处理包含文本层的 PDF
+
+### Windows 启动脚本
+
+```batch
+# 双击运行
+scripts\build.bat
+
+# 或命令行运行
+scripts\build.bat analyze ./pdfs
+```
+
+### Linux/macOS 启动脚本
+
+```bash
+# 添加执行权限
+chmod +x scripts/paperinsight.sh
+
+# 运行
+./scripts/paperinsight.sh analyze ./pdfs
+```
+
+## 缓存系统
+
+工具使用智能缓存系统提高效率:
+
+- `[MD5]_data.json`: 完整提取结果
+- `[MD5]_ocr.txt`: OCR 文本(可复用)
+
+重复运行时,会自动跳过已处理的文件。
+
+## 项目结构
+
+```
+paperinsight/
+├── cli.py                 # CLI 入口
+├── core/
+│   ├── cache.py          # 缓存管理
+│   ├── extractor.py      # 数据提取器
+│   ├── pipeline.py       # 处理管线
+│   └── reporter.py       # 报告生成器
+├── ocr/
+│   ├── baidu_api.py      # 百度 OCR API
+│   ├── local.py          # 本地 PaddleOCR
+│   └── base.py           # OCR 基类
+├── llm/
+│   ├── openai_client.py  # OpenAI 客户端
+│   ├── deepseek_client.py # DeepSeek 客户端
+│   ├── prompt_templates.py # Prompt 模板
+│   └── base.py           # LLM 基类
+├── web/
+│   └── impact_factor_search.py # 影响因子搜索
+└── utils/
+    ├── pdf_utils.py      # PDF 处理工具
+    ├── hash_utils.py     # 哈希工具
+    └── logger.py         # 日志系统
+```
+
+## 配置说明
+
+配置文件示例 (`~/.paperinsight/config.yaml`):
+
+```yaml
+# 百度 OCR API 配置
+baidu_ocr:
+  enabled: true
+  api_key: "your-api-key"
+  secret_key: "your-secret-key"
+
+# LLM 配置
+llm:
+  enabled: true
+  provider: "openai"
+  api_key: "your-api-key"
+  model: "gpt-4o"
+
+# Web 搜索配置
+web_search:
+  enabled: true
+```
+
+## API Key 获取
+
+### 百度 OCR API
+
+1. 访问 [百度智能云](https://console.bce.baidu.com/ai/#/ai/ocr/overview/index)
+2. 创建应用,获取 API Key 和 Secret Key
+3. 免费额度: 通用文字识别 500 次/天
+
+### OpenAI API
+
+1. 访问 [OpenAI Platform](https://platform.openai.com/api-keys)
+2. 创建 API Key
+3. 按使用量计费
+
+### DeepSeek API
+
+1. 访问 [DeepSeek Platform](https://platform.deepseek.com/api_keys)
+2. 创建 API Key
+3. 性价比高,中文友好
+
+## 注意事项
+
+1. **PDF 质量**: 确保文件可读,扫描版需使用 OCR
+2. **API 额度**: 注意百度 OCR 和 LLM 的使用额度
+3. **数据准确性**: 自动提取的数据建议人工核对
+4. **网络要求**: Web 搜索和 API 模式需要网络连接
+
+## 版本历史
+
+### v2.0.0 (2026-03-13)
+
+- 完全重构为模块化架构
+- 新增百度 OCR API 支持
+- 新增 LLM 语义提取
+- 新增智能缓存系统
+- 新增 Web 搜索补全影响因子
+- 新增数据溯源字段
+- 重构 CLI 框架(Typer)
+- 改进异常隔离和错误日志
+
+### v1.4 (2026-03-13)
+
+- 新增缺失项报告导出
+- 支持递归扫描 PDF
+- 支持本地 PaddleOCR
+
+## 许可证
+
+MIT License
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request!
 
 ---
 

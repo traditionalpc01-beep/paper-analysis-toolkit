@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paperinsight"
+version = "2.0.0"
+description = "智能科研论文分析工具 - 自动提取 PDF 论文关键信息"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+authors = [
+    {name = "WorkBuddy AI Assistant"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Text Processing",
+]
+keywords = ["pdf", "ocr", "llm", "paper-analysis", "research"]
+
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "PyMuPDF>=1.23.0",
+    "pdfplumber>=0.7.0",
+    "openpyxl>=3.1.0",
+    "pandas>=2.0.0",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+    "tqdm>=4.66.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+ocr = [
+    "paddlepaddle>=3.0.0",
+    "paddleocr>=3.0.0",
+]
+llm = [
+    "openai>=1.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+all = [
+    "paperinsight[ocr,llm]",
+]
+
+[project.scripts]
+paperinsight = "paperinsight.cli:app"
+paperinsight-check = "paperinsight.launcher:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/paperinsight"
+Documentation = "https://github.com/yourusername/paperinsight#readme"
+Repository = "https://github.com/yourusername/paperinsight"
+Issues = "https://github.com/yourusername/paperinsight/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["paperinsight*"]
+
+[tool.setuptools.package-data]
+paperinsight = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ["py38", "py39", "py310", "py311", "py312"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false

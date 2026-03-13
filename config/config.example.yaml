@@ -1,0 +1,43 @@
+# PaperInsight 配置示例
+# 请复制此文件为 config.yaml 并填入您的 API Key
+
+# 百度 OCR API 配置
+# 获取方式: https://console.bce.baidu.com/ai/#/ai/ocr/overview/index
+baidu_ocr:
+  enabled: true
+  api_key: "your-baidu-api-key"
+  secret_key: "your-baidu-secret-key"
+  language: "CHN_ENG"
+  timeout: 60
+
+# LLM 配置
+# OpenAI: https://platform.openai.com/api-keys
+# DeepSeek: https://platform.deepseek.com/api_keys
+llm:
+  enabled: true
+  provider: "openai"  # 或 "deepseek"
+  api_key: "your-llm-api-key"
+  model: "gpt-4o"  # 或 "deepseek-chat"
+  base_url: ""  # 可选
+  timeout: 120
+
+# Web 搜索配置
+web_search:
+  enabled: true
+  timeout: 30
+
+# 缓存配置
+cache:
+  enabled: true
+  directory: ".cache"
+
+# 输出配置
+output:
+  format: ["excel", "json"]
+  sort_by_if: true
+  generate_error_log: true
+
+# PDF 处理配置
+pdf:
+  max_pages: 0
+  text_ratio_threshold: 0.1
