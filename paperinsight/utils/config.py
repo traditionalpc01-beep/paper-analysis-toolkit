@@ -38,8 +38,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enabled": True,
         "mode": "cli",  # cli | api
         "token": "",  # API 模式需要
-        "api_url": "https://mineru.net/api",
+        "api_url": "https://mineru.net/api/v4",
         "timeout": 600,
+        "model_version": "vlm",  # pipeline | vlm | MinerU-HTML
         "output_format": "markdown",
         "extract_tables": True,
         "method": "auto",  # auto | txt | ocr
@@ -80,6 +81,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "model": "gpt-4o",
             "organization": "",
         },
+        # Longcat 配置
+        "longcat": {
+            "model": "LongCat-Flash-Chat",
+            "base_url": "https://api.longcat.chat/openai",
+        },
     },
     # Web 搜索配置
     "web_search": {
@@ -100,6 +106,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "rename_pdfs": False,
         "rename_template": "[{year}_{impact_factor}_{journal}]_{title}.pdf",
         "include_source": True,  # 是否包含原文引用
+        "bilingual_text": True,  # 是否将标题后的文本列补齐为中英对照
     },
     # PDF 处理配置
     "pdf": {
@@ -136,7 +143,7 @@ def get_config_path() -> Path:
     return config_dir / "config.yaml"
 
 
-def normalize_config(config: dict[str, Any] | None) -> dict[str, Any]:
+def normalize_config(config: Optional[dict[str, Any]]) -> dict[str, Any]:
     """将旧版配置统一转换为当前嵌套结构。"""
     normalized = copy.deepcopy(DEFAULT_CONFIG)
     if not config:
@@ -178,6 +185,8 @@ def _migrate_legacy_config(config: dict[str, Any], normalized: dict[str, Any]) -
             normalized["llm"]["openai"]["model"] = config.get("llm_model", "gpt-4o")
         elif provider == "deepseek":
             normalized["llm"]["deepseek"]["model"] = config.get("llm_model", "deepseek-chat")
+        elif provider == "longcat":
+            normalized["llm"]["longcat"]["model"] = config.get("llm_model", "LongCat-Flash-Chat")
         else:
             normalized["llm"]["model"] = config.get("llm_model", "")
     if "llm_base_url" in config:
@@ -205,6 +214,8 @@ def _migrate_legacy_config(config: dict[str, Any], normalized: dict[str, Any]) -
             "rename_template",
             normalized["output"]["rename_template"],
         )
+    if "bilingual_text" in config:
+        normalized["output"]["bilingual_text"] = bool(config.get("bilingual_text"))
 
     # PDF 迁移
     if "max_pages" in config:
@@ -339,6 +350,10 @@ def validate_api_key(api_key: str, provider: str) -> tuple[bool, str]:
 
     elif provider == "wenxin":
         # 文心一言使用 client_id 和 client_secret
+        pass
+
+    elif provider == "longcat":
+        # Longcat API Key 无特定格式要求，只需非空
         pass
 
     return True, ""

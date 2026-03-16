@@ -10,8 +10,9 @@ mineru:
   # CLI 模式: 需要安装 MinerU (pip install mineru)
   # API 模式: 需要配置 token
   token: ""  # API 模式必填，从 https://mineru.net 获取
-  api_url: "https://mineru.net/api"  # API 端点（可选）
+  api_url: "https://mineru.net/api/v4"  # API 根路径（默认 v4）
   timeout: 600  # 解析超时时间（秒）
+  model_version: "vlm"  # 可选: pipeline / vlm / MinerU-HTML
   output_format: "markdown"  # 输出格式: "markdown" 或 "json"
   extract_tables: true  # 是否提取表格
   method: "auto"  # 解析方法: "auto", "txt", "ocr"
@@ -34,9 +35,9 @@ paddlex:
 # DeepSeek: https://platform.deepseek.com/api_keys
 llm:
   enabled: true
-  provider: "openai"  # 或 "deepseek"
+  provider: "longcat"  # 或 "openai" / "deepseek" / "wenxin"
   api_key: "your-llm-api-key"
-  model: "gpt-4o"  # 或 "deepseek-chat"
+  model: "LongCat-Flash-Chat"
   base_url: ""  # 可选
   timeout: 120
 
@@ -57,6 +58,7 @@ output:
   generate_error_log: true
   rename_pdfs: false
   rename_template: "[{year}_{impact_factor}_{journal}]_{title}.pdf"
+  bilingual_text: true  # 对论文标题列开始后的自然语言文本字段输出“中文 | English”
 
 # PDF 处理配置
 pdf:

@@ -105,9 +105,10 @@ class ConfigWizard:
         console.print("请选择您要使用的大语言模型服务：\n")
 
         providers = {
-            "1": ("deepseek", "DeepSeek (推荐，性价比高)"),
-            "2": ("openai", "OpenAI GPT-4"),
-            "3": ("wenxin", "百度文心一言"),
+            "1": ("longcat", "美团 Longcat (推荐，每日刷新免费token)"),
+            "2": ("deepseek", "DeepSeek (性价比高)"),
+            "3": ("openai", "OpenAI GPT-4"),
+            "4": ("wenxin", "百度文心一言"),
         }
 
         for key, (_, desc) in providers.items():
@@ -139,16 +140,42 @@ class ConfigWizard:
             self._configure_standard_api_key(provider)
 
     def _configure_standard_api_key(self, provider: str):
-        """配置标准 API Key（OpenAI/DeepSeek）"""
+        """配置标准 API Key（OpenAI/DeepSeek/Longcat）"""
+        # 显示如何获取 API Key 的说明
+        if provider == "longcat":
+            console.print(
+                "\n📋 LONGCAT API Key 获取步骤：\n"
+                "   1. 访问 https://longcat.chat/platform/docs/zh/\n"
+                "   2. 注册/登录账号\n"
+                "   3. 进入「API Keys」页面创建密钥\n"
+                "   4. 复制生成的 Key 粘贴到下方\n"
+            )
+        elif provider == "deepseek":
+            console.print(
+                "\n📋 DEEPSEEK API Key 获取步骤：\n"
+                "   1. 访问 https://platform.deepseek.com/\n"
+                "   2. 注册/登录账号\n"
+                "   3. 进入「API Keys」页面创建密钥\n"
+                "   4. 复制生成的 Key 粘贴到下方\n"
+            )
+        elif provider == "openai":
+            console.print(
+                "\n📋 OPENAI API Key 获取步骤：\n"
+                "   1. 访问 https://platform.openai.com/\n"
+                "   2. 注册/登录账号\n"
+                "   3. 进入「API Keys」页面创建密钥\n"
+                "   4. 复制生成的 Key 粘贴到下方\n"
+            )
+
         # 显示当前配置（遮蔽）
         current_key = get_nested_value(self.config, "llm.api_key", "")
         if current_key:
             masked = mask_sensitive_value(current_key)
-            console.print(f"当前 API Key: [dim]{masked}[/dim]")
+            console.print(f"\n当前已配置的 Key: [dim]{masked}[/dim]")
 
         # 获取 API Key
         api_key = Prompt.ask(
-            f"请输入 {provider.upper()} API Key",
+            f"\n请粘贴您的 {provider.upper()} API Key",
             password=True,
         )
 
@@ -169,16 +196,40 @@ class ConfigWizard:
         # 设置 API Key
         set_nested_value(self.config, "llm.api_key", api_key.strip())
 
-        # 询问是否配置代理
+        # 询问是否配置自定义 API 端点
         current_base_url = get_nested_value(self.config, "llm.base_url", "")
         if current_base_url:
-            console.print(f"当前代理 URL: [dim]{current_base_url}[/dim]")
+            console.print(f"当前已配置的连接地址: [dim]{current_base_url}[/dim]")
 
-        if Confirm.ask("是否配置自定义 API 端点（代理）？", default=False):
-            base_url = Prompt.ask(
-                "请输入 API Base URL",
-                default=current_base_url or "",
-            )
+        console.print(
+            "\n[bold]📡 关于\"连接地址\"(API 端点)：[/bold]\n"
+            "\n"
+            "  程序需要连接到 AI 公司的服务器来获取回答。\n"
+            "\n"
+            "  ┌─────────────────────────────────────────────────────────┐\n"
+            "  │  • 默认选项：直接连接官方服务器（推荐新手使用）           │\n"
+            "  │  • 如果您在国内，可能需要填写\"代理\"才能正常使用          │\n"
+            "  │    （代理就像是一个\"中转站\"，帮您绕过网络限制）          │\n"
+            "  │  • 如果您有代理服务，可以在这里填入代理提供的地址        │\n"
+            "  └─────────────────────────────────────────────────────────┘\n"
+        )
+
+        if Confirm.ask("需要填写代理/中转地址吗？", default=False):
+            if provider == "longcat":
+                default_url = current_base_url or "https://api.longcat.chat/openai"
+                prompt = "请输入代理/中转地址"
+            elif provider == "deepseek":
+                default_url = current_base_url or "https://api.deepseek.com"
+                prompt = "请输入代理/中转地址"
+            elif provider == "openai":
+                default_url = current_base_url or "https://api.openai.com/v1"
+                prompt = "请输入代理/中转地址"
+            else:
+                default_url = current_base_url or ""
+                prompt = "请输入代理/中转地址"
+
+            console.print("[dim]不知道填什么？请咨询您的代理服务商[/dim]")
+            base_url = Prompt.ask(prompt, default=default_url)
             set_nested_value(self.config, "llm.base_url", base_url.strip())
 
         # 选择模型
@@ -228,26 +279,62 @@ class ConfigWizard:
         """选择模型"""
         if provider == "openai":
             models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
+            descriptions = [
+                "GPT-4o - 最新旗舰模型，功能最强大",
+                "GPT-4o-mini - 轻量级模型，性价比高",
+                "GPT-4-turbo - GPT-4 优化版",
+                "GPT-3.5-turbo - 经济实惠够用",
+            ]
         elif provider == "deepseek":
             models = ["deepseek-chat", "deepseek-coder"]
+            descriptions = [
+                "DeepSeek Chat - 对话模型（推荐日常使用）",
+                "DeepSeek Coder - 编程专用模型",
+            ]
         elif provider == "wenxin":
             models = ["ernie-4.0-8k", "ernie-3.5-8k", "ernie-speed-8k"]
+            descriptions = [
+                "文心一言 4.0 - 最新旗舰模型",
+                "文心一言 3.5 - 稳定版本",
+                "文心一言 Speed - 快速响应",
+            ]
+        elif provider == "longcat":
+            models = [
+                "LongCat-Flash-Chat",
+                "LongCat-Flash-Thinking",
+                "LongCat-Flash-Thinking-2601",
+                "LongCat-Flash-Lite",
+                "LongCat-Flash-Omni-2603",
+            ]
+            descriptions = [
+                "Flash-Chat - 高性能通用对话（推荐）",
+                "Flash-Thinking - 深度思考模型",
+                "Flash-Thinking-2601 - 升级版深度思考",
+                "Flash-Lite - 轻量高效 MoE 模型",
+                "Flash-Omni-2603 - 多模态模型",
+            ]
         else:
             return
 
-        console.print(f"\n可选模型: {', '.join(models)}")
+        console.print("\n请选择模型：\n")
+        for i, (model, desc) in enumerate(zip(models, descriptions), 1):
+            console.print(f"  [cyan]{i}[/cyan]. {desc}")
+
         current_model = get_nested_value(
             self.config,
             f"llm.{provider}.model",
             models[0],
         )
-        console.print(f"当前模型: [yellow]{current_model}[/yellow]")
+        current_index = models.index(current_model) + 1 if current_model in models else 1
+        console.print(f"\n当前选择: [yellow]{current_model}[/yellow]")
 
-        model = Prompt.ask(
-            "请选择模型",
-            choices=models,
-            default=current_model,
+        choice = Prompt.ask(
+            "请选择",
+            choices=[str(i) for i in range(1, len(models) + 1)],
+            default=str(current_index),
         )
+
+        model = models[int(choice) - 1]
         set_nested_value(self.config, f"llm.{provider}.model", model)
 
     def _configure_mineru(self):

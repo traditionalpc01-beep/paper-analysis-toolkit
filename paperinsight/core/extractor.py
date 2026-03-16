@@ -28,7 +28,12 @@ from paperinsight.models.schemas import (
 )
 from paperinsight.parser.base import ParseResult
 from paperinsight.llm.base import BaseLLM
-from paperinsight.llm.prompt_templates import format_extraction_prompt_v3
+from paperinsight.llm import create_llm_client
+from paperinsight.llm.prompt_templates import (
+    format_bilingual_postprocess_prompt,
+    format_extraction_prompt_v3,
+)
+from paperinsight.utils.logger import setup_logger
 
 
 class DataExtractor:
@@ -49,6 +54,7 @@ class DataExtractor:
         """
         self.config = config or {}
         self.llm_config = self.config.get("llm", {})
+        self.logger = setup_logger("paperinsight.extractor")
 
         # 初始化 LLM 客户端
         self.llm: Optional[BaseLLM] = None
@@ -57,47 +63,29 @@ class DataExtractor:
     def _init_llm_client(self) -> None:
         """初始化 LLM 客户端"""
         if not self.llm_config.get("enabled", True):
+            self.logger.info("[LLM] 已禁用，使用正则兜底")
             return
 
-        provider = self.llm_config.get("provider", "deepseek")
-
         try:
-            if provider == "openai":
-                from paperinsight.llm.openai_client import OpenAIClient
+            self.llm = create_llm_client(self.llm_config)
+            provider = self.llm_config.get("provider", "unknown")
 
-                self.llm = OpenAIClient(
-                    api_key=self.llm_config.get("api_key", ""),
-                    model=self.llm_config.get("openai", {}).get("model", "gpt-4o"),
-                    base_url=self.llm_config.get("base_url", ""),
-                    timeout=self.llm_config.get("timeout", 120),
-                )
+            if self.llm:
+                try:
+                    available = self.llm.is_available()
+                except Exception as e:
+                    self.logger.warning(f"[LLM] {provider} 连通性检查异常，将在提取时直接尝试: {e}")
+                    available = True
 
-            elif provider == "deepseek":
-                from paperinsight.llm.deepseek_client import DeepSeekClient
-
-                self.llm = DeepSeekClient(
-                    api_key=self.llm_config.get("api_key", ""),
-                    model=self.llm_config.get("deepseek", {}).get("model", "deepseek-chat"),
-                    base_url=self.llm_config.get("base_url", ""),
-                    timeout=self.llm_config.get("timeout", 120),
-                )
-
-            elif provider == "wenxin":
-                from paperinsight.llm.wenxin_client import WenxinClient
-
-                wenxin_config = self.llm_config.get("wenxin", {})
-                self.llm = WenxinClient(
-                    client_id=wenxin_config.get("client_id", ""),
-                    client_secret=wenxin_config.get("client_secret", ""),
-                    model=wenxin_config.get("model", "ernie-4.0-8k"),
-                    timeout=self.llm_config.get("timeout", 120),
-                )
-
-            if self.llm and not self.llm.is_available():
-                self.llm = None
+                if available:
+                    self.logger.info(f"[LLM] 客户端已就绪: {provider}")
+                else:
+                    self.logger.warning(f"[LLM] {provider} 连通性检查失败，仍将尝试正式提取调用")
+            else:
+                self.logger.warning(f"[LLM] 未能创建客户端: {provider}")
 
         except Exception as e:
-            print(f"[警告] LLM 客户端初始化失败: {e}")
+            self.logger.warning(f"[LLM] 客户端初始化失败: {e}")
             self.llm = None
 
     def extract(
@@ -121,14 +109,18 @@ class DataExtractor:
 
         # 优先使用 LLM 提取
         if self.llm:
+            self.logger.info(f"[LLM] 开始使用 {self.llm_config.get('provider', 'unknown')} 提取结构化数据")
             result = self._extract_with_llm(cleaned_text, parse_result)
             if result.success and result.data:
                 result.processing_time = time.time() - start_time
                 result.extraction_method = "llm"
                 result.llm_model = self.llm_config.get("provider", "unknown")
+                self.logger.info(f"[LLM] 提取成功: {result.llm_model}")
                 return result
+            self.logger.warning(f"[LLM] 提取失败，回退正则: {result.error_message}")
 
         # 回退到正则提取
+        self.logger.info("[Regex] 启用正则兜底提取")
         result = self._extract_with_regex(markdown_text, parse_result)
         result.processing_time = time.time() - start_time
         result.extraction_method = "regex"
@@ -150,12 +142,14 @@ class DataExtractor:
             prompt = format_extraction_prompt_v3(truncated_text)
 
             # 调用 LLM
+            self.logger.info(f"[LLM] 发送请求，文本长度 {len(truncated_text)} 字符")
             response = self.llm.generate_json(prompt, temperature=0.2)
 
             # 解析并校验
             paper_data = self._parse_and_validate(response)
 
             if paper_data:
+                paper_data = self._ensure_bilingual_text_fields(paper_data)
                 return ExtractionResult(
                     success=True,
                     data=paper_data,
@@ -172,6 +166,32 @@ class DataExtractor:
                 success=False,
                 error_message=f"LLM 提取失败: {str(e)}",
             )
+
+    def _ensure_bilingual_text_fields(self, paper_data: PaperData) -> PaperData:
+        """对标题之后的自然语言字段补齐中英对照。"""
+        output_config = self.config.get("output", {})
+        if not output_config.get("bilingual_text", True):
+            return paper_data
+
+        if not self.llm:
+            return paper_data
+
+        try:
+            self.logger.info("[LLM] 启用中英对照后处理，补齐标题及后续文本列")
+            prompt = format_bilingual_postprocess_prompt(paper_data.model_dump())
+            response = self.llm.generate_json(prompt, temperature=0.1)
+            bilingual_data = self._parse_and_validate(response)
+
+            if bilingual_data:
+                self.logger.info("[LLM] 中英对照后处理完成")
+                return bilingual_data
+
+            self.logger.warning("[LLM] 中英对照后处理返回数据校验失败，保留首次提取结果")
+            return paper_data
+
+        except Exception as e:
+            self.logger.warning(f"[LLM] 中英对照后处理失败，保留首次提取结果: {e}")
+            return paper_data
 
     def _parse_and_validate(self, response: Dict[str, Any]) -> Optional[PaperData]:
         """解析并校验 LLM 响应"""

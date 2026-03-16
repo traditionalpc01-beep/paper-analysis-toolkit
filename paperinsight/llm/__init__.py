@@ -1,3 +1,6 @@
+from __future__ import annotations
+from typing import Optional
+
 """
 LLM 模块
 
@@ -5,19 +8,21 @@ LLM 模块
 - OpenAI GPT
 - DeepSeek
 - 百度文心一言
+- 美团 Longcat
 
 配置示例：
 ```yaml
 llm:
   enabled: true
-  provider: "deepseek"  # openai | deepseek | wenxin
+  provider: "longcat"  # openai | deepseek | wenxin | longcat
   api_key: "your-api-key"
-  model: "deepseek-chat"
+  model: "LongCat-Flash-Chat"
 ```
 """
 
 from paperinsight.llm.base import BaseLLM
 from paperinsight.llm.prompt_templates import (
+    format_bilingual_postprocess_prompt,
     format_extraction_prompt,
     format_extraction_prompt_v3,
     format_journal_prompt,
@@ -26,6 +31,7 @@ from paperinsight.llm.prompt_templates import (
 
 __all__ = [
     "BaseLLM",
+    "format_bilingual_postprocess_prompt",
     "format_extraction_prompt",
     "format_extraction_prompt_v3",
     "format_journal_prompt",
@@ -33,7 +39,7 @@ __all__ = [
 ]
 
 
-def create_llm_client(config: dict) -> BaseLLM | None:
+def create_llm_client(config: dict) -> Optional[BaseLLM]:
     """
     工厂函数：根据配置创建 LLM 客户端
 
@@ -77,6 +83,20 @@ def create_llm_client(config: dict) -> BaseLLM | None:
                 client_id=wenxin_config.get("client_id", ""),
                 client_secret=wenxin_config.get("client_secret", ""),
                 model=wenxin_config.get("model", "ernie-4.0-8k"),
+                timeout=config.get("timeout", 120),
+            )
+
+        elif provider == "longcat":
+            from paperinsight.llm.longcat_client import LongcatClient
+
+            longcat_config = config.get("longcat", {})
+            return LongcatClient(
+                api_key=config.get("api_key", ""),
+                model=longcat_config.get("model", config.get("model", "LongCat-Flash-Chat")),
+                base_url=longcat_config.get(
+                    "base_url",
+                    config.get("base_url", "https://api.longcat.chat/openai"),
+                ),
                 timeout=config.get("timeout", 120),
             )
 
