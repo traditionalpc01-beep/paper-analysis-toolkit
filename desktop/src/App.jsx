@@ -145,6 +145,17 @@ function formatImpactFactor(value) {
   return `${value}`;
 }
 
+function matchesQuery(values, query) {
+  if (!query) {
+    return true;
+  }
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  return values.some((value) => `${value || ''}`.toLowerCase().includes(normalized));
+}
+
 function OnboardingModal({
   visible,
   step,
@@ -333,6 +344,8 @@ export default function App() {
   const [saveState, setSaveState] = useState({ saving: false, message: '', error: '' });
   const [onboarding, setOnboarding] = useState({ visible: false, step: 0, saving: false, error: '' });
   const [wizardConfig, setWizardConfig] = useState(null);
+  const [resultQuery, setResultQuery] = useState('');
+  const [resultScope, setResultScope] = useState('all');
   const [job, setJob] = useState({
     running: false,
     status: 'idle',
@@ -461,6 +474,21 @@ export default function App() {
     }
     return Math.min(100, Math.round((job.completed / job.total) * 100));
   }, [job.completed, job.total]);
+
+  const filteredResults = useMemo(() => {
+    const stats = job.stats || {};
+    const reports = Object.entries(stats.reportFiles || {}).filter(([label, targetPath]) =>
+      matchesQuery([label, targetPath], resultQuery)
+    );
+    const successItems = (stats.successItems || []).filter((item) =>
+      matchesQuery([item.file, item.title, item.journal, item.impactFactor, item.bestEqe], resultQuery)
+    );
+    const errorItems = (stats.errorItems || []).filter((item) =>
+      matchesQuery([item.file, item.message, item.context, item.type], resultQuery)
+    );
+
+    return { reports, successItems, errorItems };
+  }, [job.stats, resultQuery]);
 
   async function chooseDirectory(target) {
     const selected = await window.paperInsight.chooseDirectory({
@@ -778,15 +806,41 @@ export default function App() {
                       <div><span>重命名</span><strong>{job.stats.renamedCount}</strong></div>
                     </div>
 
+                    <div className="result-toolbar">
+                      <label className="field result-search">
+                        <span>搜索结果</span>
+                        <input
+                          value={resultQuery}
+                          onChange={(event) => setResultQuery(event.target.value)}
+                          placeholder="按文件名、标题、期刊或错误原因搜索"
+                        />
+                      </label>
+                      <div className="scope-switch">
+                        {[
+                          ['all', '全部'],
+                          ['success', '仅成功'],
+                          ['error', '仅失败']
+                        ].map(([value, label]) => (
+                          <button
+                            key={value}
+                            className={resultScope === value ? 'scope-chip active' : 'scope-chip'}
+                            onClick={() => setResultScope(value)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
                     <div className="result-grid">
                       <section className="result-card">
                         <div className="result-head">
                           <h4>报表与输出</h4>
                           <button className="ghost small" onClick={openOutputDir}>打开输出目录</button>
                         </div>
-                        {Object.entries(job.stats.reportFiles || {}).length ? (
+                        {filteredResults.reports.length ? (
                           <div className="result-list">
-                            {Object.entries(job.stats.reportFiles || {}).map(([label, targetPath]) => (
+                            {filteredResults.reports.map(([label, targetPath]) => (
                               <button key={label} className="result-item" onClick={() => openPath(targetPath)}>
                                 <span>{label}</span>
                                 <strong>{targetPath}</strong>
@@ -801,11 +855,11 @@ export default function App() {
                       <section className="result-card">
                         <div className="result-head">
                           <h4>成功论文</h4>
-                          <span>{job.stats.successItems?.length || 0} 篇</span>
+                          <span>{filteredResults.successItems.length} / {job.stats.successItems?.length || 0} 篇</span>
                         </div>
-                        {job.stats.successItems?.length ? (
+                        {resultScope !== 'error' && filteredResults.successItems.length ? (
                           <div className="result-list compact">
-                            {job.stats.successItems.map((item) => (
+                            {filteredResults.successItems.map((item) => (
                               <button key={`${item.file}-${item.path}`} className="result-item" onClick={() => openPath(item.path)}>
                                 <span>{item.file}</span>
                                 <strong>{item.title || '未提取到标题'}</strong>
@@ -813,6 +867,8 @@ export default function App() {
                               </button>
                             ))}
                           </div>
+                        ) : resultScope === 'error' ? (
+                          <div className="empty-inline">当前筛选为“仅失败”，成功结果已隐藏。</div>
                         ) : (
                           <div className="empty-inline">暂无成功记录。</div>
                         )}
@@ -821,11 +877,11 @@ export default function App() {
                       <section className="result-card">
                         <div className="result-head">
                           <h4>失败论文</h4>
-                          <span>{job.stats.errorItems?.length || 0} 篇</span>
+                          <span>{filteredResults.errorItems.length} / {job.stats.errorItems?.length || 0} 篇</span>
                         </div>
-                        {job.stats.errorItems?.length ? (
+                        {resultScope !== 'success' && filteredResults.errorItems.length ? (
                           <div className="result-list compact">
-                            {job.stats.errorItems.map((item) => (
+                            {filteredResults.errorItems.map((item) => (
                               <button key={`${item.file}-${item.path}`} className="result-item danger-soft" onClick={() => openPath(item.path)}>
                                 <span>{item.file || '未知文件'}</span>
                                 <strong>{item.context || item.type || '处理失败'}</strong>
@@ -833,6 +889,8 @@ export default function App() {
                               </button>
                             ))}
                           </div>
+                        ) : resultScope === 'success' ? (
+                          <div className="empty-inline">当前筛选为“仅成功”，失败结果已隐藏。</div>
                         ) : (
                           <div className="empty-inline">本次没有失败文件。</div>
                         )}

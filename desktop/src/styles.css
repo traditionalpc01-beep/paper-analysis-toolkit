@@ -454,6 +454,36 @@ select {
   margin: 18px 0 8px;
 }
 
+.result-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.result-search {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.scope-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.scope-chip {
+  padding: 12px 14px;
+  background: rgba(63, 52, 41, 0.08);
+  color: var(--ink);
+}
+
+.scope-chip.active {
+  background: linear-gradient(135deg, rgba(196, 104, 52, 0.18), rgba(47, 127, 116, 0.18));
+  color: var(--accent-deep);
+}
+
 .result-card {
   padding: 16px;
   border-radius: 18px;
@@ -668,7 +698,8 @@ select {
   .panel-head.split,
   .progress-meta,
   .wizard-header,
-  .wizard-actions {
+  .wizard-actions,
+  .result-toolbar {
     flex-direction: column;
     align-items: flex-start;
   }
