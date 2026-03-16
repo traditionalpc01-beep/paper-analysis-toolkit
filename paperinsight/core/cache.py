@@ -50,15 +50,27 @@ class CacheManager:
     
     def get_ocr_cache_path(self, md5: str) -> Path:
         """
-        获取 OCR 文本缓存路径
-        
+        获取旧版 OCR 文本缓存路径
+
         Args:
             md5: MD5 哈希值
-        
+
         Returns:
             缓存文件路径
         """
         return self.cache_dir / f"{md5}_ocr.md"
+
+    def get_markdown_cache_path(self, md5: str) -> Path:
+        """
+        获取 Markdown 文本缓存路径。
+
+        Args:
+            md5: MD5 哈希值
+
+        Returns:
+            缓存文件路径
+        """
+        return self.cache_dir / f"{md5}_markdown.md"
     
     def has_data_cache(self, md5: str) -> bool:
         """
@@ -74,15 +86,29 @@ class CacheManager:
     
     def has_ocr_cache(self, md5: str) -> bool:
         """
-        检查是否存在 OCR 文本缓存
-        
+        检查是否存在旧接口约定的文本缓存。
+
         Args:
             md5: MD5 哈希值
-        
+
         Returns:
             是否存在缓存
         """
-        return self.get_ocr_cache_path(md5).exists()
+        return self.has_markdown_cache(md5)
+
+    def has_markdown_cache(self, md5: str) -> bool:
+        """
+        检查是否存在 Markdown 文本缓存。
+
+        同时兼容旧版 `_ocr.md` 命名。
+        """
+        return any(
+            path.exists()
+            for path in (
+                self.get_markdown_cache_path(md5),
+                self.get_ocr_cache_path(md5),
+            )
+        )
     
     def load_data_cache(self, md5: str) -> Optional[dict]:
         """
@@ -129,36 +155,56 @@ class CacheManager:
     
     def load_ocr_cache(self, md5: str) -> Optional[str]:
         """
-        加载 OCR 文本缓存
-        
+        加载旧接口约定的文本缓存。
+
         Args:
             md5: MD5 哈希值
-        
+
         Returns:
             OCR 文本(如果存在)
         """
-        cache_path = self.get_ocr_cache_path(md5)
-        if not cache_path.exists():
-            return None
-        
-        try:
-            return cache_path.read_text(encoding="utf-8")
-        except OSError as e:
-            print(f"[警告] OCR 缓存文件读取失败: {cache_path}, 错误: {e}")
-            return None
+        return self.load_markdown_cache(md5)
+
+    def load_markdown_cache(self, md5: str) -> Optional[str]:
+        """
+        加载 Markdown 文本缓存。
+
+        优先读取新版 `_markdown.md`，若不存在则回退读取旧版 `_ocr.md`。
+        """
+        cache_paths = (
+            self.get_markdown_cache_path(md5),
+            self.get_ocr_cache_path(md5),
+        )
+
+        for cache_path in cache_paths:
+            if not cache_path.exists():
+                continue
+
+            try:
+                return cache_path.read_text(encoding="utf-8")
+            except OSError as e:
+                print(f"[警告] Markdown 缓存文件读取失败: {cache_path}, 错误: {e}")
+
+        return None
     
     def save_ocr_cache(self, md5: str, text: str) -> Path:
         """
-        保存 OCR 文本缓存
-        
+        保存旧接口约定的文本缓存。
+
         Args:
             md5: MD5 哈希值
             text: OCR 文本
-        
+
         Returns:
             缓存文件路径
         """
-        cache_path = self.get_ocr_cache_path(md5)
+        return self.save_markdown_cache(md5, text)
+
+    def save_markdown_cache(self, md5: str, text: str) -> Path:
+        """
+        保存 Markdown 文本缓存。
+        """
+        cache_path = self.get_markdown_cache_path(md5)
         cache_path.write_text(text, encoding="utf-8")
         return cache_path
     
@@ -173,6 +219,8 @@ class CacheManager:
             # 清除所有缓存
             for cache_file in self.cache_dir.glob("*_data.json"):
                 cache_file.unlink()
+            for cache_file in self.cache_dir.glob("*_markdown.md"):
+                cache_file.unlink()
             for cache_file in self.cache_dir.glob("*_ocr.md"):
                 cache_file.unlink()
         else:
@@ -180,7 +228,11 @@ class CacheManager:
             data_cache = self.get_data_cache_path(md5)
             if data_cache.exists():
                 data_cache.unlink()
-            
+
+            markdown_cache = self.get_markdown_cache_path(md5)
+            if markdown_cache.exists():
+                markdown_cache.unlink()
+
             ocr_cache = self.get_ocr_cache_path(md5)
             if ocr_cache.exists():
                 ocr_cache.unlink()
@@ -193,12 +245,14 @@ class CacheManager:
             统计信息字典
         """
         data_caches = list(self.cache_dir.glob("*_data.json"))
+        markdown_caches = list(self.cache_dir.glob("*_markdown.md"))
         ocr_caches = list(self.cache_dir.glob("*_ocr.md"))
-        
-        total_size = sum(f.stat().st_size for f in data_caches + ocr_caches)
+
+        total_size = sum(f.stat().st_size for f in data_caches + markdown_caches + ocr_caches)
         
         return {
             "data_cache_count": len(data_caches),
+            "markdown_cache_count": len(markdown_caches),
             "ocr_cache_count": len(ocr_caches),
             "total_size_bytes": total_size,
             "total_size_mb": round(total_size / (1024 * 1024), 2),

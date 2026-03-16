@@ -341,6 +341,26 @@ def _get_pdf_directory(pdf_dir_arg: Optional[Path] = None) -> Path:
         return path
 
 
+def _collect_pdf_files(pdf_dir: Path, recursive: bool) -> list[Path]:
+    """收集 PDF 文件列表。"""
+    if recursive:
+        pdf_files = list(pdf_dir.rglob("*.pdf"))
+    else:
+        pdf_files = list(pdf_dir.glob("*.pdf"))
+    return [path for path in pdf_files if path.is_file()]
+
+
+def _suggest_batch_size(file_count: int) -> int:
+    """给出兼顾速度与反馈频率的默认批大小建议。"""
+    if file_count <= 5:
+        return file_count
+    if file_count <= 20:
+        return 5
+    if file_count <= 50:
+        return 8
+    return 10
+
+
 # ============================================================================
 # 辅助函数
 # ============================================================================
@@ -508,22 +528,53 @@ def analyze(
     
     # ========== 第三步：任务输入 ==========
     pdf_dir = _get_pdf_directory(pdf_dir)
+    pdf_files = _collect_pdf_files(pdf_dir, recursive)
     
     # 设置输出目录
     if output_dir is None:
         output_dir = pdf_dir / "输出结果"
     
     # ========== 准备运行配置 ==========
+    mineru_config = config.get("mineru", {})
     paddlex_config = config.get("paddlex", {"enabled": False, "token": ""})
     llm_config = config.get("llm", {})
     web_config = config.get("web_search", {})
     cache_config = config.get("cache", {})
     output_config = config.get("output", {})
     pdf_config = config.get("pdf", {})
+    cleaner_config = config.get("cleaner", {})
+    output_formats = list(output_config.get("format", ["excel"]))
+
+    if export_json and "json" not in output_formats:
+        output_formats.append("json")
 
     # 确定是否使用 LLM
     use_llm = selected_mode == "api" and llm_config.get("enabled", False)
     use_paddlex = selected_mode == "api" and paddlex_config.get("enabled", False)
+    use_mineru_batch = (
+        selected_mode == "api"
+        and mineru_config.get("enabled", False)
+        and mineru_config.get("mode") == "api"
+        and len(pdf_files) > 1
+    )
+    batch_size = 1
+    if use_mineru_batch:
+        suggested_batch_size = min(_suggest_batch_size(len(pdf_files)), len(pdf_files))
+        console.print(
+            f"\n[bold]检测到 {len(pdf_files)} 个 PDF 文件，可启用 MinerU 批量解析。[/bold]"
+        )
+        console.print(
+            "[dim]建议批大小越大越快，但单批等待时间也会更长；程序会显示批次进度与轮询状态。[/dim]"
+        )
+        batch_size_text = Prompt.ask(
+            "请输入每批处理文件数",
+            default=str(suggested_batch_size),
+        )
+        try:
+            batch_size = int(batch_size_text)
+        except ValueError:
+            batch_size = suggested_batch_size
+        batch_size = max(1, min(batch_size, len(pdf_files)))
     
     # 初始化 LLM 客户端
     llm_client = None
@@ -552,6 +603,18 @@ def analyze(
                     client_secret=wenxin.get("client_secret"),
                     model=llm_config.get("model", "ernie-4.0-8k"),
                 )
+            elif provider == "longcat":
+                from paperinsight.llm.longcat_client import LongcatClient
+                longcat = llm_config.get("longcat", {})
+                llm_client = LongcatClient(
+                    api_key=llm_config["api_key"],
+                    model=longcat.get("model", llm_config.get("model", "LongCat-Flash-Chat")),
+                    base_url=longcat.get(
+                        "base_url",
+                        llm_config.get("base_url", "https://api.longcat.chat/openai"),
+                    ),
+                    timeout=llm_config.get("timeout", 120),
+                )
             console.print(f"\n[green]✓ LLM 已启用: {provider}[/green]")
         except Exception as e:
             console.print(f"\n[red]✗ LLM 初始化失败: {e}[/red]")
@@ -566,10 +629,16 @@ def analyze(
     console.print("=" * 60)
     console.print(f"  PDF 目录:    {pdf_dir}")
     console.print(f"  输出目录:    {output_dir}")
+    console.print(f"  文件数量:    {len(pdf_files)}")
     console.print(f"  递归扫描:    {'是' if recursive else '否'}")
     console.print(f"  运行模式:    {selected_mode}")
     console.print(f"  LLM 提取:    {'启用' if use_llm else '禁用'}")
+    if use_llm:
+        console.print(f"  LLM 提供商:  {llm_config.get('provider', 'unknown')}")
     console.print(f"  PaddleX OCR: {'启用' if use_paddlex else '禁用'}")
+    console.print(f"  MinerU批量:  {'启用' if use_mineru_batch else '禁用'}")
+    if use_mineru_batch:
+        console.print(f"  批处理大小:  {batch_size}")
     console.print(f"  Web 搜索:    {'启用' if web_config.get('enabled') else '禁用'}")
     console.print(f"  缓存:        {'禁用' if no_cache else '启用'}")
     console.print(f"  重命名 PDF:  {'启用' if rename_pdfs else '禁用'}")
@@ -581,17 +650,21 @@ def analyze(
         raise typer.Exit(0)
     
     # ========== 执行分析 ==========
+    full_config = {
+        "llm": llm_config,
+        "mineru": mineru_config,
+        "paddlex": paddlex_config,
+        "cleaner": cleaner_config,
+        "pdf": pdf_config,
+        "cache": cache_config,
+        "web_search": web_config,
+        "output": {**output_config, "format": output_formats},
+    }
+
     pipeline = AnalysisPipeline(
         output_dir=output_dir,
+        config=full_config,
         cache_dir=cache_config.get("directory", ".cache"),
-        use_paddlex=use_paddlex,
-        paddlex_token=paddlex_config.get("token"),
-        paddlex_config=paddlex_config,
-        use_llm=use_llm,
-        llm_client=llm_client,
-        use_web_search=web_config.get("enabled", False),
-        enable_cache=cache_config.get("enabled", True) and not no_cache,
-        text_ratio_threshold=pdf_config.get("text_ratio_threshold", DEFAULT_CONFIG["pdf"]["text_ratio_threshold"]),
     )
     
     with Progress(
@@ -606,10 +679,11 @@ def analyze(
             recursive=recursive,
             max_pages=max_pages if max_pages > 0 else (pdf_config.get("max_pages") or None),
             use_cache=cache_config.get("enabled", True) and not no_cache,
-            generate_json=export_json,
             sort_by_if=output_config.get("sort_by_if", True),
             rename_pdfs=rename_pdfs,
             rename_template=output_config.get("rename_template"),
+            pdf_files=pdf_files,
+            batch_size=batch_size,
         )
     
     # ========== 显示结果 ==========

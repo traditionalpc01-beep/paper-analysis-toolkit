@@ -67,6 +67,7 @@ class CleanedContent:
         获取用于数据提取的文本
 
         优先级：Experimental > Results > Abstract > Discussion > Introduction
+        如果没有识别到任何核心章节，返回完整文本作为后备
         """
         parts = []
 
@@ -93,6 +94,10 @@ class CleanedContent:
         if self.tables:
             parts.append("\n## Tables\n")
             parts.extend(self.tables)
+
+        # 后备：如果没有识别到任何核心章节，使用完整文本
+        if not parts and self.full_text:
+            return self.full_text
 
         return "\n\n".join(parts)
 
@@ -219,6 +224,7 @@ class SectionFilter:
         if not self.enabled:
             result.full_text = markdown
             result.cleaned_length = len(markdown)
+            result.tables = []
             return result
 
         # 提取表格（单独保存）
@@ -254,8 +260,11 @@ class SectionFilter:
                 # 其他章节
                 result.other_sections[section["title"]] = section["content"]
 
-        # 生成完整文本
-        result.full_text = result.get_text_for_extraction()
+        # 设置完整文本（如果没有识别到核心章节，会在 get_text_for_extraction 中使用 markdown 作为后备）
+        result.full_text = result.get_text_for_extraction() if any([
+            result.abstract, result.introduction, result.experimental,
+            result.results, result.discussion, result.conclusion
+        ]) else markdown
         result.cleaned_length = len(result.full_text)
 
         return result
