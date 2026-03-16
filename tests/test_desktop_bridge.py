@@ -48,3 +48,4 @@ def test_normalize_config_keeps_desktop_defaults():
 
     assert config["desktop"]["engine"]["mode"] == "bundled"
     assert config["desktop"]["ui"]["remember_last_paths"] is True
+    assert config["desktop"]["ui"]["onboarding_completed"] is False

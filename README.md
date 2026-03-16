@@ -104,6 +104,7 @@ python scripts/build_windows_exe.py
 
 ### 当前已实现
 
+- 首次启动向导：第一次打开时按步骤完成 API Key、引擎模式和默认项配置
 - 图形化界面：选择论文目录、输出目录、处理模式和运行选项
 - 设置页：直接配置 API Key、LLM 提供商、MinerU 与运行引擎
 - 双引擎设计：

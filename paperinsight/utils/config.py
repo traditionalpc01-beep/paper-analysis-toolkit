@@ -150,6 +150,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "last_pdf_dir": "",
             "last_output_dir": "",
             "remember_last_paths": True,
+            "onboarding_completed": False,
         },
     },
 }

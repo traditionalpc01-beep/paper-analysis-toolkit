@@ -124,6 +124,10 @@ code {
   background: rgba(89, 155, 142, 0.18);
 }
 
+.status-card.sand {
+  background: rgba(244, 215, 161, 0.14);
+}
+
 .status-card span,
 .sidebar-meta div,
 .small-note {
@@ -158,6 +162,13 @@ code {
   border-color: rgba(230, 199, 168, 0.22);
 }
 
+.sidebar-link {
+  padding: 12px 14px;
+  text-align: left;
+  color: #f7f2e8;
+  background: rgba(247, 242, 232, 0.08);
+}
+
 .sidebar-meta {
   margin-top: auto;
   padding: 16px 18px;
@@ -171,7 +182,8 @@ code {
 }
 
 .hero-card,
-.panel-card {
+.panel-card,
+.wizard-card {
   border: 1px solid rgba(77, 62, 50, 0.08);
   background: var(--panel);
   backdrop-filter: blur(12px);
@@ -196,14 +208,17 @@ code {
 }
 
 .hero-card h2,
-.panel-card h3 {
+.panel-card h3,
+.wizard-card h2,
+.wizard-card h3 {
   margin: 10px 0 0;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 2rem;
   font-weight: 600;
 }
 
-.hero-card p {
+.hero-card p,
+.wizard-card p {
   margin: 14px 0 0;
   max-width: 780px;
   color: var(--muted);
@@ -236,12 +251,14 @@ code {
   grid-column: 1 / -1;
 }
 
-.panel-card {
+.panel-card,
+.wizard-card {
   padding: 24px;
   border-radius: 26px;
 }
 
-.panel-head {
+.panel-head,
+.wizard-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -280,10 +297,15 @@ select {
   gap: 10px;
 }
 
-.option-grid {
+.option-grid,
+.wizard-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+.wide-field {
+  grid-column: 1 / -1;
 }
 
 .toggle-grid {
@@ -293,7 +315,8 @@ select {
   margin-top: 4px;
 }
 
-.toggle-grid.single {
+.toggle-grid.single,
+.wizard-toggle {
   grid-template-columns: 1fr;
 }
 
@@ -327,6 +350,10 @@ select {
   padding: 14px 18px;
   background: rgba(63, 52, 41, 0.08);
   color: var(--ink);
+}
+
+.ghost.small {
+  padding: 10px 14px;
 }
 
 .danger {
@@ -385,19 +412,24 @@ select {
   margin: 18px 0;
 }
 
-.stat-grid div {
+.stat-grid div,
+.wizard-summary-card,
+.wizard-info-block,
+.wizard-choice-card {
   padding: 16px;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.58);
 }
 
-.stat-grid span {
+.stat-grid span,
+.wizard-summary-card span {
   display: block;
   color: var(--muted);
   font-size: 0.86rem;
 }
 
-.stat-grid strong {
+.stat-grid strong,
+.wizard-summary-card strong {
   display: block;
   margin-top: 8px;
   font-size: 1.45rem;
@@ -449,8 +481,91 @@ select {
   color: var(--teal);
 }
 
-.error-text {
+.error-text,
+.wizard-error {
   color: var(--danger);
+}
+
+.wizard-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(24, 18, 12, 0.48);
+  backdrop-filter: blur(10px);
+}
+
+.wizard-card {
+  width: min(1020px, 100%);
+  max-height: calc(100vh - 56px);
+  overflow: auto;
+}
+
+.wizard-progress,
+.wizard-summary-grid,
+.wizard-panel-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.wizard-progress {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 22px;
+}
+
+.wizard-step {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(63, 52, 41, 0.06);
+  color: var(--muted);
+}
+
+.wizard-step.active {
+  background: linear-gradient(135deg, rgba(196, 104, 52, 0.18), rgba(47, 127, 116, 0.18));
+  color: var(--ink);
+}
+
+.wizard-step span,
+.wizard-step strong {
+  display: block;
+}
+
+.wizard-step strong {
+  margin-top: 4px;
+}
+
+.wizard-panel-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.wizard-info-block.full,
+.wizard-summary-card.full {
+  grid-column: 1 / -1;
+}
+
+.wizard-info-block.accent {
+  background: rgba(230, 199, 168, 0.45);
+}
+
+.wizard-info-block.teal {
+  background: rgba(195, 225, 219, 0.72);
+}
+
+.wizard-info-block.sand {
+  background: rgba(250, 243, 225, 0.88);
+}
+
+.wizard-choice-card,
+.wizard-summary-card {
+  border: 1px solid var(--line);
+}
+
+.wizard-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 24px;
 }
 
 @media (max-width: 1180px) {
@@ -465,13 +580,19 @@ select {
   .content-grid,
   .toggle-grid,
   .option-grid,
-  .stat-grid {
+  .wizard-form-grid,
+  .stat-grid,
+  .wizard-panel-grid,
+  .wizard-progress,
+  .wizard-summary-grid {
     grid-template-columns: 1fr;
   }
 
   .hero-card,
   .panel-head.split,
-  .progress-meta {
+  .progress-meta,
+  .wizard-header,
+  .wizard-actions {
     flex-direction: column;
     align-items: flex-start;
   }
