@@ -31,7 +31,7 @@ class FileRenamer:
         self,
         original_path: Union[str, Path],
         result: dict,
-        format_template: str = "[{year}_{if}_{journal}]_{title}.pdf",
+        format_template: str = "[{year}_{impact_factor}_{journal}]_{title}.pdf",
     ) -> str:
         """
         生成新文件名
@@ -62,12 +62,14 @@ class FileRenamer:
         title_clean = self._clean_title(title)
         
         # 替换模板变量
-        new_name = format_template.format(
-            year=year,
-            if=if_str,
-            journal=journal_short,
-            title=title_clean[:100],  # 限制标题长度
-        )
+        template_values = {
+            "year": year,
+            "impact_factor": if_str,
+            "if": if_str,
+            "journal": journal_short,
+            "title": title_clean[:100],
+        }
+        new_name = format_template.format_map(template_values)
         
         # 清理文件名
         new_name = self._sanitize_filename(new_name)
@@ -78,7 +80,7 @@ class FileRenamer:
         self,
         original_path: Union[str, Path],
         result: dict,
-        format_template: str = "[{year}_{if}_{journal}]_{title}.pdf",
+        format_template: str = "[{year}_{impact_factor}_{journal}]_{title}.pdf",
     ) -> Optional[Path]:
         """
         重命名文件
@@ -128,7 +130,7 @@ class FileRenamer:
     def batch_rename(
         self,
         pdf_results: list[tuple[Path, dict]],
-        format_template: str = "[{year}_{if}_{journal}]_{title}.pdf",
+        format_template: str = "[{year}_{impact_factor}_{journal}]_{title}.pdf",
     ) -> list[tuple[Path, Optional[Path]]]:
         """
         批量重命名

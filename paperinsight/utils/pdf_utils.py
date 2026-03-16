@@ -48,7 +48,7 @@ class PDFProcessor:
     def extract_text(
         self,
         max_pages: Optional[int] = None,
-        min_text_ratio: float = 0.01,
+        min_text_ratio: float = 0.001,
     ) -> Tuple[str, str, dict]:
         """
         提取 PDF 文本
@@ -180,6 +180,7 @@ def extract_text_with_fallback(
     pdf_path: Union[str, Path],
     max_pages: Optional[int] = None,
     ocr_engine=None,
+    min_text_ratio: float = 0.001,
 ) -> Tuple[str, str, dict]:
     """
     提取 PDF 文本(带回退机制)
@@ -195,19 +196,51 @@ def extract_text_with_fallback(
     processor = PDFProcessor(pdf_path)
     
     try:
-        full_text, front_text, metadata = processor.extract_text(max_pages=max_pages)
+        full_text, front_text, metadata = processor.extract_text(
+            max_pages=max_pages,
+            min_text_ratio=min_text_ratio,
+        )
+        metadata["_text_source"] = "native"
         
         # 如果提取到文本,直接返回
-        if full_text:
+        if full_text and not _looks_garbled(full_text):
             return full_text, front_text, metadata
         
         # 如果没有文本且提供了 OCR 引擎,使用 OCR
         if ocr_engine is not None:
             from paperinsight.ocr.base import BaseOCR
             if isinstance(ocr_engine, BaseOCR):
-                return ocr_engine.extract_text_from_pdf(pdf_path, max_pages)
+                ocr_text, ocr_front_text, ocr_metadata = ocr_engine.extract_text_from_pdf(
+                    pdf_path,
+                    max_pages,
+                )
+                merged_metadata = metadata.copy()
+                merged_metadata.update(ocr_metadata or {})
+                merged_metadata["_text_source"] = "ocr"
+                return ocr_text, ocr_front_text, merged_metadata
         
         return "", "", metadata
     
     finally:
         processor.close()
+
+
+def _looks_garbled(text: str) -> bool:
+    """使用保守规则判断提取文本是否明显乱码。"""
+    if not text:
+        return True
+
+    stripped = "".join(text.split())
+    if len(stripped) < 80:
+        return False
+
+    replacement_count = text.count("\ufffd")
+    if replacement_count:
+        return True
+
+    valid_chars = sum(
+        1
+        for ch in stripped
+        if ch.isalnum() or "\u4e00" <= ch <= "\u9fff" or ch in ".,;:!?()[]/%+-_=<>"
+    )
+    return (valid_chars / len(stripped)) < 0.6

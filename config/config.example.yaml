@@ -1,14 +1,18 @@
 # PaperInsight 配置示例
 # 请复制此文件为 config.yaml 并填入您的 API Key
 
-# 百度 OCR API 配置
-# 获取方式: https://console.bce.baidu.com/ai/#/ai/ocr/overview/index
-baidu_ocr:
-  enabled: true
-  api_key: "your-baidu-api-key"
-  secret_key: "your-baidu-secret-key"
-  language: "CHN_ENG"
-  timeout: 60
+# PaddleX API 配置 (百度AI Studio)
+# 获取方式: https://aistudio.baidu.com/paddleocr/task
+paddlex:
+  enabled: false
+  token: "your-paddlex-token"
+  model: "PaddleOCR-VL-1.5"  # 可选: PaddleOCR-VL-1.5, PaddleOCR-VL, PP-StructureV3, PP-OCRv5
+  use_doc_orientation: false
+  use_doc_unwarping: false
+  use_layout_detection: true
+  use_chart_recognition: false
+  timeout: 300
+  poll_interval: 5
 
 # LLM 配置
 # OpenAI: https://platform.openai.com/api-keys
@@ -36,6 +40,8 @@ output:
   format: ["excel", "json"]
   sort_by_if: true
   generate_error_log: true
+  rename_pdfs: false
+  rename_template: "[{year}_{impact_factor}_{journal}]_{title}.pdf"
 
 # PDF 处理配置
 pdf:

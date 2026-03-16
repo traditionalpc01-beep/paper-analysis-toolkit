@@ -74,8 +74,7 @@ def get_error_log_path(output_dir: Union[str, Path]) -> Path:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return output_path / f"error_log_{timestamp}.txt"
+    return output_path / "error_log.txt"
 
 
 class ErrorLogger:

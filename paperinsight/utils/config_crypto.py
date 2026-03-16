@@ -184,8 +184,7 @@ def encrypt_sensitive_fields(config: dict, fields: Optional[list[str]] = None) -
     """
     if fields is None:
         fields = [
-            "baidu_api_key",
-            "baidu_secret_key",
+            "paddlex_token",
             "llm_api_key",
             "api_key",
             "secret_key",

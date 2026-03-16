@@ -3,14 +3,13 @@
 功能: 检测运行环境、网络连接、Python 环境
 """
 
-import os
 import platform
-import shutil
-import subprocess
 import sys
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
+
+from paperinsight.utils.config import load_config
 
 
 class EnvironmentStatus(Enum):
@@ -50,10 +49,10 @@ class EnvironmentChecker:
         
         # 2. 检查网络连接
         self._check_network()
-        
-        # 3. 检查百度 OCR API 配置
-        self._check_baidu_ocr_config()
-        
+
+        # 3. 检查 PaddleX API 配置
+        self._check_paddlex_config()
+
         # 4. 检查 LLM API 配置
         self._check_llm_config()
         
@@ -89,9 +88,9 @@ class EnvironmentChecker:
     def _check_network(self):
         """检查网络连接"""
         test_urls = [
-            ("百度", "https://www.baidu.com"),
+            ("百度 AI Studio", "https://aistudio.baidu.com"),
             ("OpenAI", "https://api.openai.com"),
-            ("百度 OCR", "https://aip.baidubce.com"),
+            ("DeepSeek", "https://api.deepseek.com"),
         ]
         
         available = []
@@ -121,64 +120,38 @@ class EnvironmentChecker:
                 details="无法访问任何测试站点,请检查网络设置",
             )
     
-    def _check_baidu_ocr_config(self):
-        """检查百度 OCR API 配置"""
-        config = self._load_config()
-        
-        baidu_config = config.get("baidu_ocr", {})
-        enabled = baidu_config.get("enabled", False)
-        api_key = baidu_config.get("api_key", "")
-        secret_key = baidu_config.get("secret_key", "")
-        
+    def _check_paddlex_config(self):
+        """检查 PaddleX API 配置"""
+        config = load_config()
+
+        paddlex_config = config.get("paddlex", {})
+        enabled = paddlex_config.get("enabled", False)
+        token = paddlex_config.get("token", "")
+
         if not enabled:
-            self.results["baidu_ocr"] = CheckResult(
+            self.results["paddlex"] = CheckResult(
                 status=EnvironmentStatus.WARNING,
-                message="百度 OCR 未启用",
+                message="PaddleX API 未启用",
                 details="将在需要时使用本地 OCR",
             )
             return
-        
-        if not api_key or not secret_key:
-            self.results["baidu_ocr"] = CheckResult(
+
+        if not token:
+            self.results["paddlex"] = CheckResult(
                 status=EnvironmentStatus.ERROR,
-                message="百度 OCR 配置不完整",
-                details="请配置 API Key 和 Secret Key",
+                message="PaddleX 配置不完整",
+                details="请配置 PaddleX Token",
             )
             return
-        
-        # 尝试验证 API Key
-        try:
-            import requests
-            url = "https://aip.baidubce.com/oauth/2.0/token"
-            params = {
-                "grant_type": "client_credentials",
-                "client_id": api_key,
-                "client_secret": secret_key,
-            }
-            response = requests.post(url, params=params, timeout=10)
-            result = response.json()
-            
-            if "error" in result:
-                self.results["baidu_ocr"] = CheckResult(
-                    status=EnvironmentStatus.ERROR,
-                    message="百度 OCR API Key 无效",
-                    details=result.get("error_description", result["error"]),
-                )
-            else:
-                self.results["baidu_ocr"] = CheckResult(
-                    status=EnvironmentStatus.OK,
-                    message="百度 OCR 配置有效",
-                )
-        except Exception as e:
-            self.results["baidu_ocr"] = CheckResult(
-                status=EnvironmentStatus.WARNING,
-                message="无法验证百度 OCR 配置",
-                details=str(e),
-            )
-    
+
+        self.results["paddlex"] = CheckResult(
+            status=EnvironmentStatus.OK,
+            message="PaddleX 配置有效",
+        )
+
     def _check_llm_config(self):
         """检查 LLM API 配置"""
-        config = self._load_config()
+        config = load_config()
         
         llm_config = config.get("llm", {})
         enabled = llm_config.get("enabled", False)
@@ -260,22 +233,6 @@ class EnvironmentChecker:
                 message="PDF 处理依赖完整",
             )
     
-    def _load_config(self) -> dict:
-        """加载配置"""
-        import yaml
-        from pathlib import Path
-        
-        config_path = Path.home() / ".paperinsight" / "config.yaml"
-        
-        if config_path.exists():
-            try:
-                with config_path.open("r", encoding="utf-8") as f:
-                    return yaml.safe_load(f) or {}
-            except Exception:
-                pass
-        
-        return {}
-    
     def get_recommendation(self) -> str:
         """
         根据检查结果给出运行建议
@@ -284,7 +241,7 @@ class EnvironmentChecker:
             推荐的运行模式
         """
         network_ok = self.results.get("network", CheckResult(EnvironmentStatus.ERROR, "")).status != EnvironmentStatus.ERROR
-        baidu_ok = self.results.get("baidu_ocr", CheckResult(EnvironmentStatus.ERROR, "")).status == EnvironmentStatus.OK
+        paddlex_ok = self.results.get("paddlex", CheckResult(EnvironmentStatus.ERROR, "")).status == EnvironmentStatus.OK
         llm_ok = self.results.get("llm", CheckResult(EnvironmentStatus.ERROR, "")).status == EnvironmentStatus.OK
         local_ocr_ok = self.results.get("local_ocr", CheckResult(EnvironmentStatus.ERROR, "")).status == EnvironmentStatus.OK
         
@@ -294,9 +251,9 @@ class EnvironmentChecker:
             else:
                 return "offline_basic"  # 离线模式,仅基础正则
         
-        if baidu_ok and llm_ok:
+        if paddlex_ok and llm_ok:
             return "api"  # 智能 API 模式
-        elif baidu_ok:
+        elif paddlex_ok:
             return "ocr_api"  # 仅 OCR API 模式
         elif llm_ok:
             return "llm_api"  # 仅 LLM API 模式
