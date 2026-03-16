@@ -138,6 +138,13 @@ function buildLogLine(event) {
   return `${event.type}`;
 }
 
+function formatImpactFactor(value) {
+  if (value === null || value === undefined || value === '') {
+    return '未补全';
+  }
+  return `${value}`;
+}
+
 function OnboardingModal({
   visible,
   step,
@@ -582,6 +589,13 @@ export default function App() {
     await window.paperInsight.openPath(job.outputDir);
   }
 
+  async function openPath(targetPath) {
+    if (!targetPath) {
+      return;
+    }
+    await window.paperInsight.openPath(targetPath);
+  }
+
   if (loadState.loading) {
     return <div className="loading-shell">正在启动 PaperInsight Desktop...</div>;
   }
@@ -756,12 +770,75 @@ export default function App() {
                 </div>
 
                 {job.stats ? (
-                  <div className="stat-grid">
-                    <div><span>PDF 总数</span><strong>{job.stats.pdfCount}</strong></div>
-                    <div><span>成功</span><strong>{job.stats.successCount}</strong></div>
-                    <div><span>失败</span><strong>{job.stats.errorCount}</strong></div>
-                    <div><span>重命名</span><strong>{job.stats.renamedCount}</strong></div>
-                  </div>
+                  <>
+                    <div className="stat-grid">
+                      <div><span>PDF 总数</span><strong>{job.stats.pdfCount}</strong></div>
+                      <div><span>成功</span><strong>{job.stats.successCount}</strong></div>
+                      <div><span>失败</span><strong>{job.stats.errorCount}</strong></div>
+                      <div><span>重命名</span><strong>{job.stats.renamedCount}</strong></div>
+                    </div>
+
+                    <div className="result-grid">
+                      <section className="result-card">
+                        <div className="result-head">
+                          <h4>报表与输出</h4>
+                          <button className="ghost small" onClick={openOutputDir}>打开输出目录</button>
+                        </div>
+                        {Object.entries(job.stats.reportFiles || {}).length ? (
+                          <div className="result-list">
+                            {Object.entries(job.stats.reportFiles || {}).map(([label, targetPath]) => (
+                              <button key={label} className="result-item" onClick={() => openPath(targetPath)}>
+                                <span>{label}</span>
+                                <strong>{targetPath}</strong>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="empty-inline">本次未生成报表文件。</div>
+                        )}
+                      </section>
+
+                      <section className="result-card">
+                        <div className="result-head">
+                          <h4>成功论文</h4>
+                          <span>{job.stats.successItems?.length || 0} 篇</span>
+                        </div>
+                        {job.stats.successItems?.length ? (
+                          <div className="result-list compact">
+                            {job.stats.successItems.map((item) => (
+                              <button key={`${item.file}-${item.path}`} className="result-item" onClick={() => openPath(item.path)}>
+                                <span>{item.file}</span>
+                                <strong>{item.title || '未提取到标题'}</strong>
+                                <small>{item.journal || '未提取期刊'} · IF {formatImpactFactor(item.impactFactor)}{item.bestEqe ? ` · EQE ${item.bestEqe}` : ''}</small>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="empty-inline">暂无成功记录。</div>
+                        )}
+                      </section>
+
+                      <section className="result-card">
+                        <div className="result-head">
+                          <h4>失败论文</h4>
+                          <span>{job.stats.errorItems?.length || 0} 篇</span>
+                        </div>
+                        {job.stats.errorItems?.length ? (
+                          <div className="result-list compact">
+                            {job.stats.errorItems.map((item) => (
+                              <button key={`${item.file}-${item.path}`} className="result-item danger-soft" onClick={() => openPath(item.path)}>
+                                <span>{item.file || '未知文件'}</span>
+                                <strong>{item.context || item.type || '处理失败'}</strong>
+                                <small>{item.message || '未知错误'}</small>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="empty-inline">本次没有失败文件。</div>
+                        )}
+                      </section>
+                    </div>
+                  </>
                 ) : null}
 
                 <div className="log-panel">

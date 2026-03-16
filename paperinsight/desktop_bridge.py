@@ -105,7 +105,34 @@ def _build_stats(
     errors: list[dict[str, Any]],
     report_files: dict[str, str],
     renamed_count: int,
+    processed_items: list[tuple[Path, Any]],
 ) -> dict[str, Any]:
+    success_items = []
+    for pdf_path, paper_data in processed_items:
+        paper_info = paper_data.paper_info
+        best_device = paper_data.get_best_device()
+        success_items.append(
+            {
+                "file": pdf_path.name,
+                "path": str(pdf_path),
+                "title": paper_info.title,
+                "journal": paper_info.journal_name,
+                "impactFactor": paper_info.impact_factor,
+                "bestEqe": best_device.eqe if best_device else None,
+            }
+        )
+
+    error_items = [
+        {
+            "file": error.get("pdf_name", ""),
+            "path": error.get("pdf_path", ""),
+            "message": error.get("error_message", ""),
+            "context": error.get("context", ""),
+            "type": error.get("error_type", ""),
+        }
+        for error in errors
+    ]
+
     return {
         "status": "completed",
         "pdfCount": len(pdf_files),
@@ -113,6 +140,8 @@ def _build_stats(
         "errorCount": len(errors),
         "renamedCount": renamed_count,
         "reportFiles": report_files,
+        "successItems": success_items,
+        "errorItems": error_items,
     }
 
 
@@ -192,6 +221,8 @@ def command_analyze() -> int:
                     "errorCount": 0,
                     "renamedCount": 0,
                     "reportFiles": {},
+                    "successItems": [],
+                    "errorItems": [],
                 },
             }
         )
@@ -300,7 +331,7 @@ def command_analyze() -> int:
         if error_log_path:
             report_files["error_log"] = str(error_log_path)
 
-    stats = _build_stats(pdf_files, results, errors, report_files, renamed_count)
+    stats = _build_stats(pdf_files, results, errors, report_files, renamed_count, processed_items)
     _emit({"type": "completed", "selectedMode": selected_mode, "stats": stats})
     return 0
 

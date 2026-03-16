@@ -447,6 +447,81 @@ select {
   background: #171410;
 }
 
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 18px 0 8px;
+}
+
+.result-card {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid var(--line);
+}
+
+.result-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.result-head h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.result-head span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.result-list {
+  display: grid;
+  gap: 10px;
+}
+
+.result-list.compact {
+  max-height: 280px;
+  overflow: auto;
+}
+
+.result-item {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px;
+  text-align: left;
+  border-radius: 14px;
+  background: rgba(247, 242, 232, 0.86);
+  border: 1px solid rgba(63, 52, 41, 0.08);
+  color: var(--ink);
+}
+
+.result-item span,
+.result-item small {
+  color: var(--muted);
+}
+
+.result-item strong {
+  font-size: 0.98rem;
+  line-height: 1.45;
+}
+
+.result-item.danger-soft {
+  background: rgba(255, 236, 233, 0.9);
+}
+
+.empty-inline {
+  padding: 18px 14px;
+  border-radius: 14px;
+  background: rgba(247, 242, 232, 0.6);
+  color: var(--muted);
+}
+
 .log-line {
   padding: 11px 13px;
   border-radius: 14px;
@@ -582,6 +657,7 @@ select {
   .option-grid,
   .wizard-form-grid,
   .stat-grid,
+  .result-grid,
   .wizard-panel-grid,
   .wizard-progress,
   .wizard-summary-grid {

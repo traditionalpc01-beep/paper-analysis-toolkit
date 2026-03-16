@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from paperinsight.desktop_bridge import _build_runtime_config, _collect_pdf_files
+from paperinsight.desktop_bridge import _build_runtime_config, _build_stats, _collect_pdf_files
+from paperinsight.models.schemas import DeviceData, PaperData, PaperInfo
 from paperinsight.utils.config import DEFAULT_CONFIG, normalize_config
 
 
@@ -49,3 +50,28 @@ def test_normalize_config_keeps_desktop_defaults():
     assert config["desktop"]["engine"]["mode"] == "bundled"
     assert config["desktop"]["ui"]["remember_last_paths"] is True
     assert config["desktop"]["ui"]["onboarding_completed"] is False
+
+
+def test_build_stats_includes_success_and_error_items(tmp_path: Path):
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_text("dummy")
+
+    paper = PaperData(
+        paper_info=PaperInfo(title="Test Paper", journal_name="Nature", impact_factor=12.3),
+        devices=[DeviceData(device_label="A", eqe="22.5%", structure="ITO/PVK/EML")],
+    )
+
+    stats = _build_stats(
+        pdf_files=[pdf_path],
+        results=[paper],
+        errors=[{"pdf_name": "bad.pdf", "pdf_path": str(tmp_path / "bad.pdf"), "error_message": "解析失败", "context": "PDF解析", "error_type": "ParseFailed"}],
+        report_files={"excel": str(tmp_path / "report.xlsx")},
+        renamed_count=1,
+        processed_items=[(pdf_path, paper)],
+    )
+
+    assert stats["successItems"][0]["file"] == "paper.pdf"
+    assert stats["successItems"][0]["journal"] == "Nature"
+    assert stats["successItems"][0]["bestEqe"] == "22.5%"
+    assert stats["errorItems"][0]["file"] == "bad.pdf"
+    assert stats["reportFiles"]["excel"].endswith("report.xlsx")
