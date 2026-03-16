@@ -1,7 +1,22 @@
 # PaperInsight 配置示例
 # 请复制此文件为 config.yaml 并填入您的 API Key
 
-# PaddleX API 配置 (百度AI Studio)
+# MinerU PDF 解析配置 (推荐)
+# 官方文档: https://mineru.net/apiManage/docs
+# GitHub: https://github.com/opendatalab/MinerU
+mineru:
+  enabled: true
+  mode: "cli"  # 可选: "cli" (本地命令行) 或 "api" (云端API)
+  # CLI 模式: 需要安装 MinerU (pip install mineru)
+  # API 模式: 需要配置 token
+  token: ""  # API 模式必填，从 https://mineru.net 获取
+  api_url: "https://mineru.net/api"  # API 端点（可选）
+  timeout: 600  # 解析超时时间（秒）
+  output_format: "markdown"  # 输出格式: "markdown" 或 "json"
+  extract_tables: true  # 是否提取表格
+  method: "auto"  # 解析方法: "auto", "txt", "ocr"
+
+# PaddleX API 配置 (百度AI Studio) - 作为 MinerU 的备选方案
 # 获取方式: https://aistudio.baidu.com/paddleocr/task
 paddlex:
   enabled: false
