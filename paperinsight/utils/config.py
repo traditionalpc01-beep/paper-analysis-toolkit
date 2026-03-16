@@ -91,6 +91,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "web_search": {
         "enabled": True,
         "timeout": 30,
+        "correct_existing_impact_factor": True,
     },
     # 缓存配置
     "cache": {
@@ -106,7 +107,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "rename_pdfs": False,
         "rename_template": "[{year}_{impact_factor}_{journal}]_{title}.pdf",
         "include_source": True,  # 是否包含原文引用
-        "bilingual_text": True,  # 是否将标题后的文本列补齐为中英对照
+        "bilingual_text": False,  # 默认中文处理；每次运行前可交互确认是否启用双语
     },
     # PDF 处理配置
     "pdf": {
@@ -116,6 +117,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # 文本清洗配置（v3.0 新增）
     "cleaner": {
         "enabled": True,
+        "block_window": 1,
+        "max_input_chars": 24000,
+        "max_blocks": 80,
+        "min_block_score": 3.0,
+        "keep_table_context": True,
         "remove_sections": [
             "references",
             "acknowledgments",

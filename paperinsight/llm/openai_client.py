@@ -5,7 +5,7 @@ OpenAI 客户端模块
 
 import json
 import re
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from paperinsight.llm.base import BaseLLM
 
@@ -34,6 +34,7 @@ class OpenAIClient(BaseLLM):
         self.base_url = base_url
         self.timeout = timeout
         self._client = None
+        self.last_usage: Dict[str, Any] = {}
     
     def _get_client(self):
         """获取 OpenAI 客户端"""
@@ -80,7 +81,7 @@ class OpenAIClient(BaseLLM):
                 temperature=temperature,
                 **kwargs,
             )
-            
+            self._record_usage(response)
             return response.choices[0].message.content
         
         except Exception as e:
@@ -105,9 +106,33 @@ class OpenAIClient(BaseLLM):
             JSON 字典
         """
         client = self._get_client()
-        
+        json_schema = kwargs.pop("json_schema", None)
+        schema_name = kwargs.pop("schema_name", "paperinsight_schema")
+
         try:
-            # 尝试使用 response_format 参数(如果模型支持)
+            if json_schema:
+                try:
+                    response = client.chat.completions.create(
+                        model=self.model,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        response_format={
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": schema_name,
+                                "strict": True,
+                                "schema": json_schema,
+                            },
+                        },
+                        **kwargs,
+                    )
+                    self._record_usage(response)
+                    content = response.choices[0].message.content
+                    return json.loads(content)
+                except Exception:
+                    pass
+
             try:
                 response = client.chat.completions.create(
                     model=self.model,
@@ -117,12 +142,10 @@ class OpenAIClient(BaseLLM):
                     response_format={"type": "json_object"},
                     **kwargs,
                 )
-                
+                self._record_usage(response)
                 content = response.choices[0].message.content
                 return json.loads(content)
-            
             except Exception:
-                # 如果不支持 response_format,使用普通方式并手动解析
                 response = client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
@@ -130,16 +153,14 @@ class OpenAIClient(BaseLLM):
                     temperature=temperature,
                     **kwargs,
                 )
-                
+                self._record_usage(response)
                 content = response.choices[0].message.content
-                
-                # 提取 JSON
-                json_match = re.search(r'\{[\s\S]*\}', content)
+                json_match = re.search(r"\{[\s\S]*\}", content)
                 if json_match:
                     return json.loads(json_match.group())
-                
+
                 raise ValueError(f"无法从响应中提取 JSON: {content[:200]}")
-        
+
         except json.JSONDecodeError as e:
             raise ValueError(f"JSON 解析失败: {e}") from e
         except Exception as e:
@@ -157,3 +178,12 @@ class OpenAIClient(BaseLLM):
             return True
         except Exception:
             return False
+
+    def _record_usage(self, response: Any) -> None:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            self.last_usage = {}
+            return
+
+        usage_data = usage.model_dump() if hasattr(usage, "model_dump") else dict(usage)
+        self.last_usage = usage_data

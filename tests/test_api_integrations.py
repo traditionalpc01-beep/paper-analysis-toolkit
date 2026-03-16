@@ -117,28 +117,28 @@ def test_data_extractor_runs_bilingual_postprocess_for_text_fields(monkeypatch):
             },
             {
                 "paper_info": {
-                    "title": "高效率蓝光 OLED | Blue OLED with improved efficiency",
-                    "optimization_strategy": "界面工程提升激子限制能力 | Interface engineering improves exciton confinement.",
+                    "title": "中文：高效率蓝光 OLED\nEnglish: Blue OLED with improved efficiency",
+                    "optimization_strategy": "中文：界面工程提升激子限制能力\nEnglish: Interface engineering improves exciton confinement.",
                     "best_eqe": "22.1%",
                     "research_type": "OLED",
                     "emitter_type": "TADF",
                 },
                 "devices": [
                     {
-                        "device_label": "冠军器件 | Champion device",
+                        "device_label": "中文：冠军器件\nEnglish: Champion device",
                         "structure": "ITO/PEDOT:PSS/EML/TPBi/LiF/Al",
                         "eqe": "22.1%",
-                        "notes": "器件采用优化主材配比制备 | Device prepared with optimized host ratio.",
+                        "notes": "中文：器件采用优化主材配比制备\nEnglish: Device prepared with optimized host ratio.",
                     }
                 ],
                 "data_source": {
-                    "eqe_source": "冠军器件获得 22.1% 的最大 EQE。 | The champion device achieved a maximum EQE of 22.1%.",
-                    "structure_source": "器件结构为 ITO/PEDOT:PSS/EML/TPBi/LiF/Al。 | The device structure was ITO/PEDOT:PSS/EML/TPBi/LiF/Al.",
+                    "eqe_source": "中文：冠军器件获得 22.1% 的最大 EQE。\nEnglish: The champion device achieved a maximum EQE of 22.1%.",
+                    "structure_source": "中文：器件结构为 ITO/PEDOT:PSS/EML/TPBi/LiF/Al。\nEnglish: The device structure was ITO/PEDOT:PSS/EML/TPBi/LiF/Al.",
                 },
                 "optimization": {
-                    "level": "界面工程 | Interface engineering",
-                    "strategy": "超薄中间层平衡电荷并抑制猝灭。 | A thin interlayer balances charges and suppresses quenching.",
-                    "key_findings": "中间层在不改变发光颜色的前提下提升 EQE。 | The interlayer raises EQE without shifting emission color.",
+                    "level": "中文：界面工程\nEnglish: Interface engineering",
+                    "strategy": "中文：超薄中间层平衡电荷并抑制猝灭。\nEnglish: A thin interlayer balances charges and suppresses quenching.",
+                    "key_findings": "中文：中间层在不改变发光颜色的前提下提升 EQE。\nEnglish: The interlayer raises EQE without shifting emission color.",
                 },
             },
         ]
@@ -169,11 +169,11 @@ def test_data_extractor_runs_bilingual_postprocess_for_text_fields(monkeypatch):
     )
 
     assert result.success is True
-    assert result.data.paper_info.title == "高效率蓝光 OLED | Blue OLED with improved efficiency"
-    assert result.data.optimization.level == "界面工程 | Interface engineering"
+    assert result.data.paper_info.title == "中文：高效率蓝光 OLED\nEnglish: Blue OLED with improved efficiency"
+    assert result.data.optimization.level == "中文：界面工程\nEnglish: Interface engineering"
     assert (
         result.data.data_source.eqe_source
-        == "冠军器件获得 22.1% 的最大 EQE。 | The champion device achieved a maximum EQE of 22.1%."
+        == "中文：冠军器件获得 22.1% 的最大 EQE。\nEnglish: The champion device achieved a maximum EQE of 22.1%."
     )
     assert result.data.devices[0].structure == "ITO/PEDOT:PSS/EML/TPBi/LiF/Al"
     assert len(llm.calls) == 2

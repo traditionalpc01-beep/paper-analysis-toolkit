@@ -45,6 +45,7 @@ llm:
 web_search:
   enabled: true
   timeout: 30
+  correct_existing_impact_factor: true
 
 # 缓存配置
 cache:
@@ -58,7 +59,30 @@ output:
   generate_error_log: true
   rename_pdfs: false
   rename_template: "[{year}_{impact_factor}_{journal}]_{title}.pdf"
-  bilingual_text: true  # 对论文标题列开始后的自然语言文本字段输出“中文 | English”
+  bilingual_text: false  # 默认中文处理；每次运行前交互确认，启用后导出为“中文：...\nEnglish: ...”
+
+# 文本清洗配置（v3.1 结构感知窗口过滤）
+cleaner:
+  enabled: true
+  block_window: 1
+  max_input_chars: 24000
+  max_blocks: 80
+  min_block_score: 3.0
+  keep_table_context: true
+  remove_sections:
+    - "references"
+    - "acknowledgments"
+    - "author contributions"
+    - "supplementary material"
+    - "conflict of interest"
+    - "data availability"
+  keep_sections:
+    - "abstract"
+    - "introduction"
+    - "experimental"
+    - "results"
+    - "discussion"
+    - "conclusion"
 
 # PDF 处理配置
 pdf:

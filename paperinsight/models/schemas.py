@@ -322,6 +322,28 @@ class ExtractionResult(BaseModel):
         description="使用的 LLM 模型（如果使用 LLM 提取）"
     )
 
+    def __getitem__(self, key: str):
+        """
+        兼容旧版字典式访问。
+
+        优先返回 to_excel_row() 中的扁平字段；若命中 data_source，则返回嵌套映射。
+        """
+        if not self.data:
+            raise KeyError(key)
+
+        flattened = self.data.to_excel_row()
+        if key in flattened:
+            return flattened[key]
+
+        if key == "data_source":
+            return self.data.data_source.model_dump()
+
+        dumped = self.data.model_dump()
+        if key in dumped:
+            return dumped[key]
+
+        raise KeyError(key)
+
 
 # JSON Schema 用于 LLM Prompt
 PAPER_DATA_JSON_SCHEMA = {

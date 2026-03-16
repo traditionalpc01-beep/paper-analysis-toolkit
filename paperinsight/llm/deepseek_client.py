@@ -20,6 +20,7 @@ class DeepSeekClient(BaseLLM):
         self,
         api_key: str,
         model: str = "deepseek-chat",
+        base_url: Optional[str] = None,
         timeout: int = 120,
     ):
         """
@@ -32,6 +33,7 @@ class DeepSeekClient(BaseLLM):
         """
         self.api_key = api_key
         self.model = model
+        self.base_url = base_url or self.BASE_URL
         self.timeout = timeout
         self._client = None
     
@@ -43,7 +45,7 @@ class DeepSeekClient(BaseLLM):
                 
                 self._client = OpenAI(
                     api_key=self.api_key,
-                    base_url=self.BASE_URL,
+                    base_url=self.base_url,
                     timeout=self.timeout,
                 )
             

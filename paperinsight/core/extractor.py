@@ -45,14 +45,26 @@ class DataExtractor:
     - Regex 模式：正则表达式提取（兜底）
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        config: Optional[Dict[str, Any]] = None,
+        use_llm: Optional[bool] = None,
+    ):
         """
         初始化数据提取器
 
         Args:
             config: 配置字典，包含 LLM 配置等
         """
+        if use_llm is not None:
+            config = dict(config or {})
+            config.setdefault("llm", {})
+            config["llm"]["enabled"] = bool(use_llm)
+
         self.config = config or {}
+        if "use_llm" in self.config:
+            self.config.setdefault("llm", {})
+            self.config["llm"]["enabled"] = bool(self.config["use_llm"])
         self.llm_config = self.config.get("llm", {})
         self.logger = setup_logger("paperinsight.extractor")
 
@@ -134,21 +146,29 @@ class DataExtractor:
     ) -> ExtractionResult:
         """使用 LLM 提取"""
         try:
-            # 限制文本长度
-            max_chars = 15000
-            truncated_text = text[:max_chars] if len(text) > max_chars else text
+            prepared_text = self._prepare_llm_input(text)
 
             # 构建 Prompt
-            prompt = format_extraction_prompt_v3(truncated_text)
+            prompt = format_extraction_prompt_v3(prepared_text)
 
             # 调用 LLM
-            self.logger.info(f"[LLM] 发送请求，文本长度 {len(truncated_text)} 字符")
-            response = self.llm.generate_json(prompt, temperature=0.2)
+            self.logger.info(f"[LLM] 发送请求，文本长度 {len(prepared_text)} 字符")
+            llm_kwargs: Dict[str, Any] = {}
+            if self._supports_strict_schema():
+                llm_kwargs.update(
+                    {
+                        "json_schema": PAPER_DATA_JSON_SCHEMA,
+                        "schema_name": "paperinsight_paper_data",
+                    }
+                )
+            response = self.llm.generate_json(prompt, temperature=0.2, **llm_kwargs)
 
             # 解析并校验
             paper_data = self._parse_and_validate(response)
 
             if paper_data:
+                paper_data = self._merge_inferred_devices(paper_data, prepared_text)
+                paper_data = self._sanitize_devices(paper_data)
                 paper_data = self._ensure_bilingual_text_fields(paper_data)
                 return ExtractionResult(
                     success=True,
@@ -179,7 +199,15 @@ class DataExtractor:
         try:
             self.logger.info("[LLM] 启用中英对照后处理，补齐标题及后续文本列")
             prompt = format_bilingual_postprocess_prompt(paper_data.model_dump())
-            response = self.llm.generate_json(prompt, temperature=0.1)
+            llm_kwargs: Dict[str, Any] = {}
+            if self._supports_strict_schema():
+                llm_kwargs.update(
+                    {
+                        "json_schema": PAPER_DATA_JSON_SCHEMA,
+                        "schema_name": "paperinsight_bilingual_paper_data",
+                    }
+                )
+            response = self.llm.generate_json(prompt, temperature=0.1, **llm_kwargs)
             bilingual_data = self._parse_and_validate(response)
 
             if bilingual_data:
@@ -192,6 +220,32 @@ class DataExtractor:
         except Exception as e:
             self.logger.warning(f"[LLM] 中英对照后处理失败，保留首次提取结果: {e}")
             return paper_data
+
+    def _supports_strict_schema(self) -> bool:
+        provider = self.llm_config.get("provider", "").lower()
+        return provider == "openai"
+
+    def _prepare_llm_input(self, text: str) -> str:
+        """准备 LLM 输入，优先相信 cleaner 的预算控制，仅在极端情况下兜底截断。"""
+        if not text:
+            return ""
+
+        max_chars = (
+            self.config.get("cleaner", {}).get("max_input_chars")
+            or self.llm_config.get("max_input_chars")
+            or 0
+        )
+        if not max_chars or len(text) <= max_chars:
+            return text
+
+        self.logger.warning(
+            f"[LLM] 清洗后文本仍超过预算，执行边界截断: {len(text)} -> {max_chars}"
+        )
+        truncated = text[:max_chars]
+        boundary = max(truncated.rfind("\n\n"), truncated.rfind("\n### "), truncated.rfind("\n## "))
+        if boundary > max_chars * 0.6:
+            return truncated[:boundary].strip()
+        return truncated.strip()
 
     def _parse_and_validate(self, response: Dict[str, Any]) -> Optional[PaperData]:
         """解析并校验 LLM 响应"""
@@ -256,6 +310,7 @@ class DataExtractor:
                 data_source=data_source,
                 optimization=optimization,
             )
+            paper_data = self._sanitize_devices(paper_data)
 
             return paper_data
 
@@ -308,6 +363,8 @@ class DataExtractor:
                 data_source=data_source,
                 optimization=optimization,
             )
+            paper_data = self._merge_inferred_devices(paper_data, text)
+            paper_data = self._sanitize_devices(paper_data)
 
             return ExtractionResult(
                 success=True,
@@ -452,44 +509,285 @@ class DataExtractor:
 
     def _extract_devices(self, text: str) -> List[DeviceData]:
         """提取器件数据"""
-        devices = []
+        candidate_devices = self._extract_candidate_devices(text)
+        if candidate_devices:
+            return candidate_devices
 
-        # 提取器件结构
         structures = self._extract_all_structures(text)
-
-        # 提取 EQE 值
         eqes = self._extract_all_eqe(text)
-
-        # 提取 CIE 坐标
         cies = self._extract_all_cie(text)
-
-        # 提取寿命
         lifetimes = self._extract_all_lifetime(text)
 
-        # 如果只有一组数据，创建单个器件
         if structures or eqes or cies or lifetimes:
-            device = DeviceData(
-                structure=structures[0] if structures else None,
-                eqe=eqes[0] if eqes else None,
-                cie=cies[0] if cies else None,
-                lifetime=lifetimes[0] if lifetimes else None,
-            )
-            devices.append(device)
+            return [
+                DeviceData(
+                    structure=structures[0] if structures else None,
+                    eqe=eqes[0] if eqes else None,
+                    cie=cies[0] if cies else None,
+                    lifetime=lifetimes[0] if lifetimes else None,
+                )
+            ]
 
-        return devices
+        return []
+
+    def _extract_candidate_devices(self, text: str) -> List[DeviceData]:
+        """按段落/候选片段提取多器件信息。"""
+        segments = self._build_device_segments(text)
+        devices: List[DeviceData] = []
+        seen_signatures: set[tuple] = set()
+
+        for segment in segments:
+            structure = self._extract_first_structure(segment)
+            eqe = self._extract_first_eqe(segment)
+            cie = self._extract_first_cie(segment)
+            lifetime = self._extract_first_lifetime(segment)
+            label = self._extract_device_label(segment)
+
+            has_signal = bool(structure or eqe or cie or lifetime)
+            if not has_signal:
+                continue
+
+            signature = (label or "", structure or "", eqe or "", cie or "", lifetime or "")
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
+
+            devices.append(
+                DeviceData(
+                    device_label=label,
+                    structure=structure,
+                    eqe=eqe,
+                    cie=cie,
+                    lifetime=lifetime,
+                    notes=self._build_device_notes(segment),
+                )
+            )
+
+        return devices[:6]
+
+    def _build_device_segments(self, text: str) -> List[str]:
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+        segments: List[str] = []
+
+        for paragraph in paragraphs:
+            if self._segment_signal_score(paragraph) >= 2:
+                segments.append(paragraph)
+
+        sentence_chunks = re.split(r"(?<=[.!?])\s+", text)
+        window: List[str] = []
+        for sentence in sentence_chunks:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            if self._segment_signal_score(sentence) > 0:
+                window.append(sentence)
+            else:
+                if window:
+                    segments.append(" ".join(window))
+                    window = []
+        if window:
+            segments.append(" ".join(window))
+
+        deduped: List[str] = []
+        seen: set[str] = set()
+        for segment in segments:
+            normalized = re.sub(r"\s+", " ", segment)
+            if normalized not in seen:
+                seen.add(normalized)
+                deduped.append(segment)
+        return deduped[:20]
+
+    def _segment_signal_score(self, text: str) -> int:
+        score = 0
+        if self._extract_first_structure(text):
+            score += 2
+        if self._extract_first_eqe(text):
+            score += 2
+        if self._extract_first_cie(text):
+            score += 1
+        if self._extract_first_lifetime(text):
+            score += 1
+        if self._extract_device_label(text):
+            score += 1
+        return score
+
+    def _extract_first_structure(self, text: str) -> Optional[str]:
+        structures = self._extract_all_structures(text)
+        return structures[0] if structures else None
+
+    def _extract_first_eqe(self, text: str) -> Optional[str]:
+        values = self._extract_all_eqe(text)
+        return values[0] if values else None
+
+    def _extract_first_cie(self, text: str) -> Optional[str]:
+        values = self._extract_all_cie(text)
+        return values[0] if values else None
+
+    def _extract_first_lifetime(self, text: str) -> Optional[str]:
+        values = self._extract_all_lifetime(text)
+        return values[0] if values else None
+
+    def _extract_device_label(self, text: str) -> Optional[str]:
+        patterns = [
+            r"\b(champion device|best device|optimized device|control device|reference device)\b",
+            r"\b(device\s*[A-Z0-9])\b",
+            r"\b(sample\s*[A-Z0-9])\b",
+            r"\b(QLED[-\s]*[A-Z0-9]+)\b",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return " ".join(match.group(1).split())
+        return None
+
+    def _build_device_notes(self, text: str) -> Optional[str]:
+        compact = " ".join(text.split())
+        if len(compact) <= 220:
+            return compact
+        return compact[:217].rstrip() + "..."
+
+    def _merge_inferred_devices(self, paper_data: PaperData, text: str) -> PaperData:
+        """用本地启发式补强器件列表，优先修补空器件或单器件缺字段场景。"""
+        inferred_devices = self._extract_candidate_devices(text)
+        if not inferred_devices:
+            return paper_data
+
+        existing_devices = list(paper_data.devices)
+        if not existing_devices:
+            paper_data.devices = inferred_devices
+            self._refresh_best_eqe(paper_data)
+            return paper_data
+
+        if len(existing_devices) == 1 and self._device_signal_score(existing_devices[0]) <= 1:
+            paper_data.devices = inferred_devices
+            self._refresh_best_eqe(paper_data)
+            return paper_data
+
+        merged = list(existing_devices)
+        seen = {self._device_signature(device) for device in merged}
+        for device in inferred_devices:
+            signature = self._device_signature(device)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            merged.append(device)
+
+        paper_data.devices = merged[:6]
+        self._refresh_best_eqe(paper_data)
+        return paper_data
+
+    def _device_signal_score(self, device: DeviceData) -> int:
+        return sum(
+            1
+            for value in [device.device_label, device.structure, device.eqe, device.cie, device.lifetime]
+            if value
+        )
+
+    def _device_signature(self, device: DeviceData) -> tuple:
+        return (
+            (device.device_label or "").lower(),
+            (device.structure or "").lower(),
+            (device.eqe or "").lower(),
+            (device.cie or "").lower(),
+            (device.lifetime or "").lower(),
+        )
+
+    def _refresh_best_eqe(self, paper_data: PaperData) -> None:
+        if paper_data.paper_info.best_eqe:
+            return
+
+        best_value = -1.0
+        best_label = None
+        for device in paper_data.devices:
+            if not device.eqe:
+                continue
+            match = re.search(r"([0-9]+(?:\.[0-9]+)?)", device.eqe)
+            if not match:
+                continue
+            value = float(match.group(1))
+            if value > best_value:
+                best_value = value
+                best_label = device.eqe
+
+        if best_label:
+            paper_data.paper_info.best_eqe = best_label
+
+    def _sanitize_devices(self, paper_data: PaperData) -> PaperData:
+        cleaned_devices: List[DeviceData] = []
+        seen: set[tuple] = set()
+
+        for device in paper_data.devices:
+            normalized = self._sanitize_device(device)
+            if normalized is None:
+                continue
+            signature = self._device_signature(normalized)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            cleaned_devices.append(normalized)
+
+        cleaned_devices.sort(
+            key=lambda item: (
+                self._device_signal_score(item),
+                1 if item.eqe else 0,
+                1 if item.lifetime else 0,
+                1 if item.structure else 0,
+            ),
+            reverse=True,
+        )
+        paper_data.devices = cleaned_devices[:6]
+
+        if paper_data.paper_info.best_eqe and not any(
+            device.eqe == paper_data.paper_info.best_eqe for device in paper_data.devices
+        ):
+            paper_data.paper_info.best_eqe = None
+        self._refresh_best_eqe(paper_data)
+        return paper_data
+
+    def _sanitize_device(self, device: DeviceData) -> Optional[DeviceData]:
+        structure = device.structure
+        if structure:
+            structure = re.sub(r"\s+", " ", structure).strip(" .;")
+            if len(structure) > 220 or structure.count(".") > 1:
+                structure = self._extract_first_structure(structure)
+
+        notes = device.notes
+        if notes:
+            notes = re.sub(r"\s+", " ", notes).strip()
+            if len(notes) > 280:
+                notes = notes[:277].rstrip() + "..."
+
+        normalized = DeviceData(
+            device_label=device.device_label,
+            structure=structure,
+            eqe=device.eqe,
+            cie=device.cie,
+            lifetime=device.lifetime,
+            luminance=device.luminance,
+            current_efficiency=device.current_efficiency,
+            power_efficiency=device.power_efficiency,
+            notes=notes,
+        )
+
+        score = self._device_signal_score(normalized)
+        has_key_metric = bool(normalized.eqe or normalized.cie or normalized.lifetime)
+        if score == 0:
+            return None
+        if score <= 1 and not has_key_metric:
+            return None
+        return normalized
 
     def _extract_all_structures(self, text: str) -> List[str]:
         """提取所有器件结构"""
         patterns = [
-            r'(ITO\s*/[^/\n]+(?:/[^/\n]+)+)',
-            r'(Glass\s*/[^/\n]+(?:/[^/\n]+)+)',
+            r'((?:ITO|Glass)\s*/\s*[A-Za-z0-9:+()._\-\s]{1,40}(?:\s*/\s*[A-Za-z0-9:+()._\-\s]{1,40}){2,8})',
         ]
 
         structures = []
         for pattern in patterns:
             matches = re.findall(pattern, text)
             for m in matches:
-                cleaned = m.strip()
+                cleaned = re.sub(r"\s+", " ", m).strip(" .;,)(")
                 if len(cleaned) > 10 and cleaned not in structures:
                     structures.append(cleaned)
 
