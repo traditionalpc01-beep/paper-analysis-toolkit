@@ -98,6 +98,47 @@ python scripts/build_windows_exe.py
 - `PaperInsight-windows-x64-<版本>.zip`
 - `PaperInsight-windows-x64-<版本>.zip.sha256`
 
+## 桌面版应用
+
+仓库现已新增 `React + Electron + Python` 的桌面版 MVP，代码位于 `desktop/`。
+
+### 当前已实现
+
+- 图形化界面：选择论文目录、输出目录、处理模式和运行选项
+- 设置页：直接配置 API Key、LLM 提供商、MinerU 与运行引擎
+- 双引擎设计：
+  - `bundled`：面向普通用户的内置后端模式
+  - `system_python`：面向高级用户的系统 Python 模式
+- 后端桥接：`paperinsight.desktop_bridge` 用 JSON 消息驱动桌面端分析流程
+- Windows 打包：GitHub Actions 可构建桌面安装包
+
+### 本地启动桌面版
+
+```bash
+cd desktop
+npm install
+npm run dev
+```
+
+桌面端默认会优先尝试内置后端；开发环境下如果没有 `PaperInsightBackend.exe`，会自动回退到系统 Python：
+
+```bash
+python -m paperinsight.desktop_bridge config-get
+```
+
+### 本地构建桌面安装包
+
+先构建 Windows 后端，再打桌面安装包：
+
+```bash
+python scripts/build_windows_exe.py --target desktop-backend
+cd desktop
+npm install
+npm run dist:win
+```
+
+构建结果位于 `desktop/release/`。
+
 ---
 
 ## 启动方式

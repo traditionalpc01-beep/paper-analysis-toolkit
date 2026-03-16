@@ -139,6 +139,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "conclusion",
         ],
     },
+    # 桌面端配置
+    "desktop": {
+        "engine": {
+            "mode": "bundled",  # bundled | system_python
+            "python_path": "",
+            "backend_path": "",
+        },
+        "ui": {
+            "last_pdf_dir": "",
+            "last_output_dir": "",
+            "remember_last_paths": True,
+        },
+    },
 }
 
 

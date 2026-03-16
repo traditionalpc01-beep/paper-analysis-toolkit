@@ -14,6 +14,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_ROOT = PROJECT_ROOT / "build" / "pyinstaller"
 
+TARGETS = {
+    "cli": {
+        "entry": PROJECT_ROOT / "paperinsight" / "__main__.py",
+        "name": "PaperInsight",
+        "bundle": True,
+    },
+    "desktop-backend": {
+        "entry": PROJECT_ROOT / "paperinsight" / "desktop_bridge.py",
+        "name": "PaperInsightBackend",
+        "bundle": False,
+    },
+}
+
 
 def read_version() -> str:
     namespace: dict[str, str] = {}
@@ -30,8 +43,10 @@ def sha256sum(path: Path) -> str:
     return digest.hexdigest()
 
 
-def build_executable() -> Path:
-    entry_script = PROJECT_ROOT / "paperinsight" / "__main__.py"
+def build_executable(target: str) -> Path:
+    target_config = TARGETS[target]
+    entry_script = target_config["entry"]
+    executable_name = target_config["name"]
     pyinstaller_run(
         [
             str(entry_script),
@@ -40,7 +55,7 @@ def build_executable() -> Path:
             "--onefile",
             "--console",
             "--name",
-            "PaperInsight",
+            executable_name,
             "--distpath",
             str(DIST_DIR),
             "--workpath",
@@ -61,7 +76,7 @@ def build_executable() -> Path:
             "openpyxl",
         ]
     )
-    exe_path = DIST_DIR / "PaperInsight.exe"
+    exe_path = DIST_DIR / f"{executable_name}.exe"
     if not exe_path.exists():
         raise FileNotFoundError(f"PyInstaller build did not produce {exe_path}")
     return exe_path
@@ -120,6 +135,12 @@ def create_release_bundle(version: str, exe_path: Path) -> tuple[Path, Path]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the Windows PaperInsight executable.")
     parser.add_argument(
+        "--target",
+        choices=sorted(TARGETS.keys()),
+        default="cli",
+        help="Build target.",
+    )
+    parser.add_argument(
         "--version",
         default=read_version(),
         help="Version string used in the release bundle name.",
@@ -130,11 +151,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     DIST_DIR.mkdir(parents=True, exist_ok=True)
-    exe_path = build_executable()
-    zip_path, checksum_path = create_release_bundle(args.version, exe_path)
+    exe_path = build_executable(args.target)
     print(f"Built executable: {exe_path}")
-    print(f"Built archive: {zip_path}")
-    print(f"Wrote checksum: {checksum_path}")
+    if TARGETS[args.target]["bundle"]:
+        zip_path, checksum_path = create_release_bundle(args.version, exe_path)
+        print(f"Built archive: {zip_path}")
+        print(f"Wrote checksum: {checksum_path}")
 
 
 if __name__ == "__main__":

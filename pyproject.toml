@@ -67,6 +67,7 @@ all = [
 [project.scripts]
 paperinsight = "paperinsight.cli:app"
 paperinsight-check = "paperinsight.launcher:main"
+paperinsight-desktop-backend = "paperinsight.desktop_bridge:main"
 
 [project.urls]
 Homepage = "https://github.com/traditionalpc01-beep/paper-analysis-toolkit"

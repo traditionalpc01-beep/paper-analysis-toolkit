@@ -29,9 +29,13 @@ env/
 # IDE
 .vscode/
 .idea/
+node_modules/
+desktop/node_modules/
 
 # Output
 输出结果/
+desktop/dist/
+desktop/release/
 
 # Cache
 .cache/
