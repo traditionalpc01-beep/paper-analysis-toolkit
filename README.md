@@ -55,8 +55,8 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/yourname/paperinsight.git
-cd paperinsight
+git clone https://github.com/traditionalpc01-beep/paper-analysis-toolkit.git
+cd paper-analysis-toolkit
 
 # 安装依赖
 pip install -r requirements.txt
@@ -68,6 +68,35 @@ pip install paddlepaddle paddleocr
 # 可选：安装 OpenAI 客户端
 pip install openai
 ```
+
+### Windows 免安装可执行版
+
+- 推送到 `main` 后，GitHub Actions 会自动构建 Windows 可执行包并上传为工作流产物。
+- 推送 `v*` 标签后，会额外发布两个下载入口：
+  - GitHub Release 附件：`PaperInsight-windows-x64-<版本>.zip`
+  - GitHub Packages（NuGet）：`PaperInsight.Windows`
+- 下载后解压，直接运行 `PaperInsight.exe check`、`PaperInsight.exe config`、`PaperInsight.exe analyze <PDF目录>` 即可。
+- 示例发布命令：
+
+```bash
+git tag v3.0.0
+git push origin main --tags
+```
+
+### 本地构建 Windows 可执行版
+
+如果你在 Windows 机器上本地打包，可以直接运行：
+
+```bash
+python -m pip install ".[llm,build]"
+python scripts/build_windows_exe.py
+```
+
+构建产物会输出到 `dist/`：
+
+- `PaperInsight.exe`
+- `PaperInsight-windows-x64-<版本>.zip`
+- `PaperInsight-windows-x64-<版本>.zip.sha256`
 
 ---
 
