@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 
 const tabs = [
   { id: 'analyze', label: '分析工作台' },
-  { id: 'settings', label: '服务配置' }
+  { id: 'settings', label: '服务配置' },
+  { id: 'help', label: '关于与帮助' }
 ];
 
 const wizardSteps = [
@@ -23,6 +24,15 @@ const initialRunOptions = {
   renamePdfs: false,
   bilingual: false
 };
+
+const supportLinks = [
+  { label: '项目仓库', url: 'https://github.com/traditionalpc01-beep/paper-analysis-toolkit' },
+  { label: '提交 Issue', url: 'https://github.com/traditionalpc01-beep/paper-analysis-toolkit/issues' },
+  { label: 'OpenAI Platform', url: 'https://platform.openai.com/' },
+  { label: 'DeepSeek Platform', url: 'https://platform.deepseek.com/' },
+  { label: 'Longcat 文档', url: 'https://longcat.chat/platform/docs/zh/' },
+  { label: 'MinerU 官网', url: 'https://mineru.net/' }
+];
 
 function cloneConfig(config) {
   return JSON.parse(JSON.stringify(config));
@@ -154,6 +164,13 @@ function matchesQuery(values, query) {
     return true;
   }
   return values.some((value) => `${value || ''}`.toLowerCase().includes(normalized));
+}
+
+function displayValue(value, fallback = '未设置') {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
+  return `${value}`;
 }
 
 function OnboardingModal({
@@ -475,6 +492,26 @@ export default function App() {
     return Math.min(100, Math.round((job.completed / job.total) * 100));
   }, [job.completed, job.total]);
 
+  const heroTitle = useMemo(() => {
+    if (activeTab === 'analyze') {
+      return '用点选代替命令行';
+    }
+    if (activeTab === 'help') {
+      return '把安装、配置和排障说明收进同一个桌面入口';
+    }
+    return '把 API Key 和运行模式收进设置页';
+  }, [activeTab]);
+
+  const heroDescription = useMemo(() => {
+    if (activeTab === 'analyze') {
+      return '现在已经加上首次启动向导，新用户第一次打开就能按步骤完成 API Key、引擎和默认项设置；高级用户仍然可以切回系统 Python。';
+    }
+    if (activeTab === 'help') {
+      return '帮助页集中展示版本、路径、常用入口和外部资源，方便普通用户直接查看环境信息、定位结果目录并完成基础排障。';
+    }
+    return '所有常用配置项都已经收进图形界面，包括 LLM 服务、MinerU、缓存策略和系统 Python 兜底模式。';
+  }, [activeTab]);
+
   const filteredResults = useMemo(() => {
     const stats = job.stats || {};
     const reports = Object.entries(stats.reportFiles || {}).filter(([label, targetPath]) =>
@@ -516,8 +553,9 @@ export default function App() {
   }
 
   async function persistConfig(nextConfig, successMessage) {
-    const withPdfDir = setNestedValue(nextConfig, 'desktop.ui.last_pdf_dir', runOptions.pdfDir);
-    const withOutputDir = setNestedValue(withPdfDir, 'desktop.ui.last_output_dir', runOptions.outputDir);
+    const rememberLastPaths = Boolean(getNestedValue(nextConfig, 'desktop.ui.remember_last_paths', true));
+    const withPdfDir = setNestedValue(nextConfig, 'desktop.ui.last_pdf_dir', rememberLastPaths ? runOptions.pdfDir : '');
+    const withOutputDir = setNestedValue(withPdfDir, 'desktop.ui.last_output_dir', rememberLastPaths ? runOptions.outputDir : '');
     const finalConfig = setNestedValue(withOutputDir, 'desktop.ui.onboarding_completed', true);
     const response = await window.paperInsight.saveConfig(finalConfig);
     setConfig(response.config);
@@ -624,6 +662,20 @@ export default function App() {
     await window.paperInsight.openPath(targetPath);
   }
 
+  async function openExternal(targetUrl) {
+    if (!targetUrl) {
+      return;
+    }
+    await window.paperInsight.openExternal(targetUrl);
+  }
+
+  async function showItem(targetPath) {
+    if (!targetPath) {
+      return;
+    }
+    await window.paperInsight.showItem(targetPath);
+  }
+
   if (loadState.loading) {
     return <div className="loading-shell">正在启动 PaperInsight Desktop...</div>;
   }
@@ -690,11 +742,8 @@ export default function App() {
           <header className="hero-card">
             <div>
               <span className="eyebrow">Desktop MVP</span>
-              <h2>{activeTab === 'analyze' ? '用点选代替命令行' : '把 API Key 和运行模式收进设置页'}</h2>
-              <p>
-                现在已经加上首次启动向导，新用户第一次打开就能按步骤完成 API Key、引擎和默认项设置；
-                高级用户仍然可以切回系统 Python。
-              </p>
+              <h2>{heroTitle}</h2>
+              <p>{heroDescription}</p>
             </div>
             <div className="hero-pills">
               <span>{modeLabel(runOptions.mode)}</span>
@@ -903,6 +952,108 @@ export default function App() {
                   {job.logs.length ? job.logs.map((entry) => (
                     <div key={entry.id} className={`log-line ${entry.type}`}>{entry.text}</div>
                   )) : <div className="empty-state">任务日志会显示在这里。</div>}
+                </div>
+              </article>
+            </section>
+          ) : activeTab === 'help' ? (
+            <section className="content-grid settings-grid">
+              <article className="panel-card">
+                <div className="panel-head">
+                  <div>
+                    <span className="panel-kicker">About</span>
+                    <h3>运行环境</h3>
+                  </div>
+                </div>
+                <div className="stat-grid help-stats">
+                  <div><span>版本</span><strong>{meta?.version || env?.version || '未知'}</strong></div>
+                  <div><span>平台</span><strong>{displayValue(env?.platform)}</strong></div>
+                  <div><span>Python</span><strong>{displayValue(env?.pythonExecutable)}</strong></div>
+                  <div><span>引擎模式</span><strong>{engineMode === 'bundled' ? '内置后端' : '系统 Python'}</strong></div>
+                </div>
+              </article>
+
+              <article className="panel-card">
+                <div className="panel-head">
+                  <div>
+                    <span className="panel-kicker">Paths</span>
+                    <h3>本地路径</h3>
+                  </div>
+                </div>
+                <div className="result-list">
+                  {[
+                    ['配置文件', meta?.configPath],
+                    ['缓存目录', getNestedValue(config, 'cache.directory', '.cache')],
+                    ['上次论文目录', getNestedValue(config, 'desktop.ui.last_pdf_dir', '')],
+                    ['上次输出目录', getNestedValue(config, 'desktop.ui.last_output_dir', '')]
+                  ].map(([label, value]) => (
+                    <div key={label} className="result-item static">
+                      <span>{label}</span>
+                      <strong>{displayValue(value)}</strong>
+                      <div className="inline-actions">
+                        <button className="ghost small" disabled={!value} onClick={() => openPath(value)}>打开</button>
+                        <button className="ghost small" disabled={!value} onClick={() => showItem(value)}>定位</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel-card wide">
+                <div className="panel-head split">
+                  <div>
+                    <span className="panel-kicker">Support</span>
+                    <h3>帮助与资源</h3>
+                  </div>
+                  <button className="ghost" onClick={reopenOnboarding}>重新打开首次向导</button>
+                </div>
+                <div className="help-grid">
+                  <section className="help-card">
+                    <h4>常见操作</h4>
+                    <div className="result-list">
+                      <button className="result-item" onClick={() => setActiveTab('analyze')}>
+                        <span>开始处理</span>
+                        <strong>返回分析工作台</strong>
+                      </button>
+                      <button className="result-item" onClick={() => setActiveTab('settings')}>
+                        <span>修改配置</span>
+                        <strong>打开服务配置页</strong>
+                      </button>
+                      <button className="result-item" disabled={!job.outputDir} onClick={() => openOutputDir()}>
+                        <span>查看结果</span>
+                        <strong>打开最近输出目录</strong>
+                      </button>
+                    </div>
+                  </section>
+
+                  <section className="help-card">
+                    <h4>外部链接</h4>
+                    <div className="result-list">
+                      {supportLinks.map((item) => (
+                        <button key={item.url} className="result-item" onClick={() => openExternal(item.url)}>
+                          <span>{item.label}</span>
+                          <strong>{item.url}</strong>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="help-card full">
+                    <h4>排障建议</h4>
+                    <div className="help-notes">
+                      <div>
+                        <strong>1. API 调用失败</strong>
+                        <p>先检查设置页里的 API Key、Base URL 和网络状态；如果只是本地跑通流程，可以先切到正则模式。</p>
+                      </div>
+                      <div>
+                        <strong>2. 打包版无法调用后端</strong>
+                        <p>优先使用内置后端；如果切换到系统 Python，请确认该环境已安装 `paperinsight` 并填写正确的 Python 路径。</p>
+                      </div>
+                      <div>
+                        <strong>3. 结果不完整</strong>
+                        <p>可以启用 MinerU、联网补全影响因子，或回到设置页检查当前是否禁用了 LLM 与缓存策略。</p>
+                      </div>
+                    </div>
+                  </section>
                 </div>
               </article>
             </section>

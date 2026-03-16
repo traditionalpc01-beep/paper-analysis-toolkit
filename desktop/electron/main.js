@@ -261,6 +261,22 @@ ipcMain.handle('shell:open-path', async (_event, targetPath) => {
   return shell.openPath(targetPath);
 });
 
+ipcMain.handle('shell:open-external', async (_event, targetUrl) => {
+  if (!targetUrl) {
+    return false;
+  }
+  await shell.openExternal(targetUrl);
+  return true;
+});
+
+ipcMain.handle('shell:show-item', async (_event, targetPath) => {
+  if (!targetPath) {
+    return false;
+  }
+  shell.showItemInFolder(targetPath);
+  return true;
+});
+
 app.whenReady().then(() => {
   createWindow();
 
