@@ -14,20 +14,28 @@ from openpyxl.utils import get_column_letter
 
 
 class ReportGenerator:
-    """报告生成器"""
+    """报告生成器 v3.0
+    
+    按照 PRD 3.0 规范生成 Excel 报告：
+    - 主信息列（标题、作者、IF）独占单元格
+    - 多器件数据列（结构、EQE、CIE、寿命）使用 \n 换行拼接
+    """
 
     FIELD_MAPPING = {
         "File": ("File",),
         "URL": ("URL",),
-        "期刊名称": ("journal_name", "期刊名称"),
+        "期刊名称": ("journal_name", "期刊", "期刊名称"),
         "影响因子": ("影响因子", "impact_factor"),
         "作者": ("authors", "作者"),
-        "论文标题": ("title", "论文标题"),
-        "器件结构": ("device_structure", "器件结构"),
+        "论文标题": ("title", "标题", "论文标题"),
+        "器件结构": ("device_structure", "器件结构", "结构"),
+        "EQE(外量子效率)": ("eqe", "EQE", "外量子效率"),
+        "色度坐标": ("cie", "CIE", "色度坐标"),
+        "寿命": ("lifetime", "寿命"),
         "补充信息": ("supplementary_info", "补充信息"),
     }
     
-    # 报告列定义
+    # 报告列定义 - 按照 PRD 3.0 规范排序
     REPORT_HEADERS = [
         "File",
         "URL",
@@ -36,13 +44,17 @@ class ReportGenerator:
         "作者",
         "论文标题",
         "器件结构",
-        "优化层级",
-        "优化策略",
         "EQE(外量子效率)",
         "色度坐标",
         "寿命",
-        "数据溯源",
-        "补充信息",
+        "最高EQE",
+        "优化策略",
+        "优化详情",
+        "关键发现",
+        "EQE原文",
+        "CIE原文",
+        "寿命原文",
+        "结构原文",
     ]
     
     def __init__(self, output_dir: Union[str, Path]):
@@ -119,7 +131,7 @@ class ReportGenerator:
                 if header in {"EQE(外量子效率)", "色度坐标", "寿命"} and value:
                     cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
         
-        # 设置列宽
+        # 设置列宽 - 按照 PRD 3.0 规范
         column_widths = {
             "File": 30,
             "URL": 40,
@@ -127,14 +139,18 @@ class ReportGenerator:
             "影响因子": 12,
             "作者": 25,
             "论文标题": 50,
-            "器件结构": 40,
-            "优化层级": 25,
-            "优化策略": 40,
-            "EQE(外量子效率)": 18,
+            "器件结构": 45,  # 多器件数据可能较长
+            "EQE(外量子效率)": 20,
             "色度坐标": 20,
-            "寿命": 18,
-            "数据溯源": 50,
-            "补充信息": 40,
+            "寿命": 20,
+            "最高EQE": 12,
+            "优化策略": 40,
+            "优化详情": 40,
+            "关键发现": 40,
+            "EQE原文": 50,
+            "CIE原文": 50,
+            "寿命原文": 50,
+            "结构原文": 50,
         }
         
         for col_idx, header in enumerate(self.REPORT_HEADERS, 1):
@@ -159,6 +175,10 @@ class ReportGenerator:
         """
         格式化单元格值
         
+        按照 PRD 3.0 规范：
+        - 多器件数据列（结构、EQE、CIE、寿命）已在 to_excel_row() 中使用 \n 拼接
+        - 数据溯源列拆分为独立的原文引用列
+        
         Args:
             result: 提取结果
             header: 列名
@@ -166,37 +186,45 @@ class ReportGenerator:
         Returns:
             格式化后的值
         """
-        # 特殊字段处理
-        if header in {"EQE(外量子效率)", "色度坐标", "寿命"}:
-            params = result.get("experimental_params", {})
-            key_map = {
-                "EQE(外量子效率)": "eqe",
-                "色度坐标": "cie",
-                "寿命": "lifetime",
-            }
-            values = params.get(key_map[header], [])
-            if isinstance(values, list):
-                return "\n".join(values)
-            return str(values) if values else ""
+        # 多器件数据列 - 已在 PaperData.to_excel_row() 中处理为换行拼接格式
+        if header == "器件结构":
+            return result.get("器件结构") or result.get("device_structure") or ""
         
-        if header == "数据溯源":
-            sources = result.get("data_source", {})
-            parts = []
-            if sources.get("eqe_source"):
-                parts.append(f"EQE: {sources['eqe_source']}")
-            if sources.get("cie_source"):
-                parts.append(f"CIE: {sources['cie_source']}")
-            if sources.get("lifetime_source"):
-                parts.append(f"寿命: {sources['lifetime_source']}")
-            return "\n".join(parts)
+        if header == "EQE(外量子效率)":
+            return result.get("EQE") or result.get("eqe") or ""
         
-        if header in {"优化层级", "优化策略"}:
-            opt = result.get("optimization", {})
-            key_map = {
-                "优化层级": "level",
-                "优化策略": "strategy",
-            }
-            return opt.get(key_map[header], "") if isinstance(opt, dict) else ""
+        if header == "色度坐标":
+            return result.get("CIE") or result.get("cie") or ""
+        
+        if header == "寿命":
+            return result.get("寿命") or result.get("lifetime") or ""
+        
+        # 最高 EQE
+        if header == "最高EQE":
+            return result.get("最高EQE") or result.get("best_eqe") or ""
+        
+        # 优化策略相关
+        if header == "优化策略":
+            return result.get("优化策略") or result.get("optimization_strategy") or ""
+        
+        if header == "优化详情":
+            return result.get("优化详情") or ""
+        
+        if header == "关键发现":
+            return result.get("关键发现") or ""
+        
+        # 数据溯源原文列
+        if header == "EQE原文":
+            return result.get("EQE原文") or result.get("eqe_source") or ""
+        
+        if header == "CIE原文":
+            return result.get("CIE原文") or result.get("cie_source") or ""
+        
+        if header == "寿命原文":
+            return result.get("寿命原文") or result.get("lifetime_source") or ""
+        
+        if header == "结构原文":
+            return result.get("结构原文") or result.get("structure_source") or ""
         
         # 一般字段
         value = self._get_mapped_value(result, header)
