@@ -108,6 +108,7 @@ python scripts/build_windows_exe.py
 - 图形化界面：选择论文目录、输出目录、处理模式和运行选项
 - 结果详情区：分析完成后直接查看报表文件、成功论文清单和失败原因
 - 结果筛选：支持按关键词搜索成功/失败结果，并快速切换只看成功或只看失败
+- 安装包品牌化：已补充桌面应用图标、Windows 安装包图标和统一安装产物命名
 - 设置页：直接配置 API Key、LLM 提供商、MinerU 与运行引擎
 - 双引擎设计：
   - `bundled`：面向普通用户的内置后端模式
@@ -141,6 +142,12 @@ npm run dist:win
 ```
 
 构建结果位于 `desktop/release/`。
+
+如需重新生成桌面端图标资源，可执行：
+
+```bash
+python scripts/generate_desktop_assets.py
+```
 
 ---
 

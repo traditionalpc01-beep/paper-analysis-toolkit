@@ -7,6 +7,10 @@ const isDev = !app.isPackaged;
 let mainWindow = null;
 let activeAnalysisProcess = null;
 
+function appIconPath() {
+  return path.resolve(__dirname, '..', 'assets', 'icon.png');
+}
+
 function bundledBackendPath() {
   if (isDev) {
     return path.resolve(__dirname, '..', '..', 'dist', 'PaperInsightBackend.exe');
@@ -128,6 +132,7 @@ function createWindow() {
     minHeight: 760,
     backgroundColor: '#f3efe4',
     title: 'PaperInsight',
+    icon: appIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
