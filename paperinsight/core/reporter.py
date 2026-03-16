@@ -6,7 +6,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Optional, Union
 
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -15,6 +15,17 @@ from openpyxl.utils import get_column_letter
 
 class ReportGenerator:
     """报告生成器"""
+
+    FIELD_MAPPING = {
+        "File": ("File",),
+        "URL": ("URL",),
+        "期刊名称": ("journal_name", "期刊名称"),
+        "影响因子": ("影响因子", "impact_factor"),
+        "作者": ("authors", "作者"),
+        "论文标题": ("title", "论文标题"),
+        "器件结构": ("device_structure", "器件结构"),
+        "补充信息": ("supplementary_info", "补充信息"),
+    }
     
     # 报告列定义
     REPORT_HEADERS = [
@@ -63,8 +74,7 @@ class ReportGenerator:
         """
         # 生成文件名
         if output_filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_filename = f"Paper_Analysis_Report_{timestamp}.xlsx"
+            output_filename = "Paper_Analysis_Report.xlsx"
         
         output_path = self.output_dir / output_filename
         
@@ -94,7 +104,7 @@ class ReportGenerator:
         
         # 排序
         if sort_by_if:
-            results = sorted(results, key=lambda x: x.get("影响因子", 0) or 0, reverse=True)
+            results = sorted(results, key=self._sort_key_by_if, reverse=True)
         
         # 写入数据
         for row_idx, result in enumerate(results, 2):
@@ -182,14 +192,21 @@ class ReportGenerator:
         
         if header in {"优化层级", "优化策略"}:
             opt = result.get("optimization", {})
-            return opt.get(header, "") if isinstance(opt, dict) else ""
+            key_map = {
+                "优化层级": "level",
+                "优化策略": "strategy",
+            }
+            return opt.get(key_map[header], "") if isinstance(opt, dict) else ""
         
         # 一般字段
-        value = result.get(header, "")
+        value = self._get_mapped_value(result, header)
         if isinstance(value, (list, dict)):
             return json.dumps(value, ensure_ascii=False)
-        
-        return str(value) if value else ""
+
+        if header == "影响因子":
+            return self._coerce_if_value(value)
+
+        return str(value) if value not in (None, "") else ""
     
     def generate_json_report(
         self,
@@ -209,13 +226,12 @@ class ReportGenerator:
             生成的文件路径
         """
         if output_filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_filename = f"Paper_Analysis_Report_{timestamp}.json"
+            output_filename = "Paper_Analysis_Report.json"
         
         output_path = self.output_dir / output_filename
         
         if sort_by_if:
-            results = sorted(results, key=lambda x: x.get("影响因子", 0) or 0, reverse=True)
+            results = sorted(results, key=self._sort_key_by_if, reverse=True)
         
         with output_path.open("w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
@@ -243,8 +259,7 @@ class ReportGenerator:
             return None
         
         if output_filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_filename = f"error_log_{timestamp}.txt"
+            output_filename = "error_log.txt"
         
         output_path = self.output_dir / output_filename
         
@@ -268,3 +283,24 @@ class ReportGenerator:
         print(f"[错误日志] 已保存: {output_path}")
         
         return output_path
+
+    def _get_mapped_value(self, result: dict, header: str):
+        for key in self.FIELD_MAPPING.get(header, (header,)):
+            if key in result and result[key] not in (None, ""):
+                return result[key]
+        return ""
+
+    def _sort_key_by_if(self, result: dict) -> float:
+        return self._coerce_if_value(self._get_mapped_value(result, "影响因子"))
+
+    @staticmethod
+    def _coerce_if_value(value) -> float:
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        if isinstance(value, str):
+            match = __import__("re").search(r"([0-9]+(?:\.[0-9]+)?)", value)
+            if match:
+                return float(match.group(1))
+
+        return 0.0

@@ -58,7 +58,7 @@ class CacheManager:
         Returns:
             缓存文件路径
         """
-        return self.cache_dir / f"{md5}_ocr.txt"
+        return self.cache_dir / f"{md5}_ocr.md"
     
     def has_data_cache(self, md5: str) -> bool:
         """
@@ -173,7 +173,7 @@ class CacheManager:
             # 清除所有缓存
             for cache_file in self.cache_dir.glob("*_data.json"):
                 cache_file.unlink()
-            for cache_file in self.cache_dir.glob("*_ocr.txt"):
+            for cache_file in self.cache_dir.glob("*_ocr.md"):
                 cache_file.unlink()
         else:
             # 清除指定 MD5 的缓存
@@ -193,7 +193,7 @@ class CacheManager:
             统计信息字典
         """
         data_caches = list(self.cache_dir.glob("*_data.json"))
-        ocr_caches = list(self.cache_dir.glob("*_ocr.txt"))
+        ocr_caches = list(self.cache_dir.glob("*_ocr.md"))
         
         total_size = sum(f.stat().st_size for f in data_caches + ocr_caches)
         

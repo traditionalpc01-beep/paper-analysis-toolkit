@@ -3,11 +3,7 @@
 功能: 检测环境并选择最佳运行方式
 """
 
-import os
-import platform
-import subprocess
 import sys
-from pathlib import Path
 from typing import Optional
 
 
@@ -163,7 +159,7 @@ def diagnose_and_run(args: list[str]) -> int:
             "网络连接失败",
             "无法访问互联网,将使用离线模式\n"
             "以下功能将不可用:\n"
-            "  - 百度 OCR API\n"
+            "  - PaddleX API\n"
             "  - LLM 语义提取\n"
             "  - Web 搜索补全影响因子"
         )
@@ -222,11 +218,6 @@ def diagnose_and_run(args: list[str]) -> int:
 def main():
     """主入口"""
     args = sys.argv[1:]
-    
-    # 如果没有参数,显示帮助
-    if not args:
-        args = ["--help"]
-    
     return diagnose_and_run(args)
 
 

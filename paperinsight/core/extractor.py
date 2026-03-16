@@ -79,6 +79,7 @@ class DataExtractor:
         """使用正则表达式提取"""
         result = {
             "journal_name": self._extract_journal_name(front_text or full_text),
+            "影响因子": self._extract_impact_factor(front_text or full_text),
             "title": self._extract_title(front_text or full_text, metadata),
             "authors": self._extract_authors(front_text or full_text, metadata),
             "device_structure": self._extract_device_structure(full_text),
@@ -88,9 +89,9 @@ class DataExtractor:
                 "lifetime": self._extract_lifetime(full_text),
             },
             "data_source": {
-                "eqe_source": "",
-                "cie_source": "",
-                "lifetime_source": "",
+                "eqe_source": self._extract_metric_source(full_text, "eqe"),
+                "cie_source": self._extract_metric_source(full_text, "cie"),
+                "lifetime_source": self._extract_metric_source(full_text, "lifetime"),
             },
             "optimization": {
                 "level": self._extract_optimization_level(full_text),
@@ -99,12 +100,35 @@ class DataExtractor:
         }
         
         return result
+
+    def _extract_impact_factor(self, text: str) -> float:
+        """从论文首页文本中提取影响因子。"""
+        patterns = [
+            r'impact\s+factor[^0-9]{0,20}([0-9]+(?:\.[0-9]+)?)',
+            r'\bIF[^0-9]{0,10}([0-9]+(?:\.[0-9]+)?)\b',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if not match:
+                continue
+
+            try:
+                value = float(match.group(1))
+            except ValueError:
+                continue
+
+            if 0.1 < value < 200:
+                return value
+
+        return 0.0
     
     def _validate_result(self, result: dict) -> dict:
         """验证和清理结果"""
         # 确保所有必需字段存在
         defaults = {
             "journal_name": "",
+            "影响因子": 0.0,
             "title": "",
             "authors": "",
             "device_structure": "",
@@ -131,8 +155,25 @@ class DataExtractor:
                 for sub_key, sub_default in default_value.items():
                     if sub_key not in result.get(key, {}):
                         result[key][sub_key] = sub_default
+
+        result["影响因子"] = self._coerce_impact_factor(result.get("影响因子"))
         
         return result
+
+    def _coerce_impact_factor(self, value) -> float:
+        """标准化影响因子为浮点数。"""
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        if isinstance(value, str):
+            match = re.search(r'([0-9]+(?:\.[0-9]+)?)', value)
+            if match:
+                try:
+                    return float(match.group(1))
+                except ValueError:
+                    return 0.0
+
+        return 0.0
     
     def _extract_journal_name(self, text: str) -> str:
         """提取期刊名称"""
@@ -171,24 +212,18 @@ class DataExtractor:
     
     def _extract_authors(self, text: str, metadata: dict) -> str:
         """提取作者"""
-        # 先从元数据提取
         if metadata.get("author"):
             authors = metadata["author"]
             parts = [p.strip() for p in re.split(r"[;,\n]+", authors) if p.strip()]
-            if len(parts) > 3:
-                return ", ".join(parts[:3]) + " et al."
-            return ", ".join(parts[:3])
-        
-        # 从文本提取(简单模式)
+            return ", ".join(parts)
+
         name_pattern = r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b'
-        matches = re.findall(name_pattern, text[:2000])
-        
+        matches = re.findall(name_pattern, text[:5000])
+
         if matches:
-            unique_names = list(dict.fromkeys(matches))[:3]
-            if len(matches) > 3:
-                return ", ".join(unique_names) + " et al."
+            unique_names = list(dict.fromkeys(matches))
             return ", ".join(unique_names)
-        
+
         return "未提取"
     
     def _extract_device_structure(self, text: str) -> str:
@@ -307,4 +342,26 @@ class DataExtractor:
         if strategies:
             return f"采用{', '.join(strategies)}等方法优化器件性能。"
         
+        return ""
+
+    def _extract_metric_source(self, text: str, metric: str) -> str:
+        """提取指标所在句子，作为简易数据溯源。"""
+        sentence_patterns = {
+            "eqe": [
+                r'[^.!?\n]*?(?:EQE|external quantum efficiency)[^.!?\n]*?[0-9]+(?:\.[0-9]+)?\s*%[^.!?\n]*[.!?]?',
+            ],
+            "cie": [
+                r'[^.!?\n]*?CIE[^.!?\n]*?\([0-9]\.[0-9]+\s*[,，]\s*[0-9]\.[0-9]+\)[^.!?\n]*[.!?]?',
+                r'[^.!?\n]*?\([0-9]\.[0-9]+\s*[,，]\s*[0-9]\.[0-9]+\)[^.!?\n]*?CIE[^.!?\n]*[.!?]?',
+            ],
+            "lifetime": [
+                r'[^.!?\n]*?(?:T[⑤5]0|LT[⑤5]0|lifetime)[^.!?\n]*?[0-9]+(?:\.[0-9]+)?\s*(?:h|hr|hrs|hour|hours)[^.!?\n]*[.!?]?',
+            ],
+        }
+
+        for pattern in sentence_patterns.get(metric, []):
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return " ".join(match.group(0).split())
+
         return ""
