@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from math import ceil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -60,6 +61,9 @@ class AnalysisPipeline:
         self.cache_dir = Path(cache_dir)
         self.enable_cache = self.config.get("cache", {}).get("enabled", True)
 
+        # 初始化日志记录器（放在最前面，确保其他初始化可以使用）
+        self.logger = setup_logger("paperinsight.pipeline")
+
         # 初始化缓存管理器
         self.cache_manager = CacheManager(self.cache_dir) if self.enable_cache else None
 
@@ -81,9 +85,6 @@ class AnalysisPipeline:
 
         # 初始化错误日志记录器
         self.error_logger = ErrorLogger(self.output_dir)
-
-        # 初始化日志记录器
-        self.logger = setup_logger("paperinsight.pipeline")
 
     def _init_parser(self) -> Optional[MinerUParser]:
         """初始化文档解析器"""
@@ -154,9 +155,41 @@ class AnalysisPipeline:
                 "PDF解析",
             )
 
-        # Step 3: 文本清洗
+        return self._extract_from_parse_result(
+            pdf_path=pdf_path,
+            parse_result=parse_result,
+            md5=md5,
+            use_cache=use_cache,
+            start_time=start_time,
+        )
+
+    def _extract_from_parse_result(
+        self,
+        pdf_path: Path,
+        parse_result: ParseResult,
+        md5: str,
+        use_cache: bool,
+        start_time: Optional[float] = None,
+    ) -> Tuple[Optional[PaperData], Optional[Dict[str, Any]]]:
+        """对解析后的 Markdown 执行清洗、提取、校验与缓存。"""
+        pdf_name = pdf_path.name
+        start_time = start_time or time.time()
+
+        self.logger.info(
+            f"[调试] 解析结果 markdown 长度: {len(parse_result.markdown) if parse_result.markdown else 0}"
+        )
         cleaned_content = self.cleaner.clean(parse_result.markdown)
         extraction_text = cleaned_content.get_text_for_extraction()
+        self.logger.info(
+            f"[调试] 清洗后提取文本长度: {len(extraction_text) if extraction_text else 0}"
+        )
+        self.logger.info(
+            f"[调试] full_text={len(cleaned_content.full_text) if cleaned_content.full_text else 0}, "
+            f"abstract={len(cleaned_content.abstract) if cleaned_content.abstract else 0}, "
+            f"introduction={len(cleaned_content.introduction) if cleaned_content.introduction else 0}, "
+            f"experimental={len(cleaned_content.experimental) if cleaned_content.experimental else 0}, "
+            f"results={len(cleaned_content.results) if cleaned_content.results else 0}"
+        )
 
         if not extraction_text.strip():
             return None, self._build_error_info(
@@ -166,7 +199,6 @@ class AnalysisPipeline:
                 "文本清洗",
             )
 
-        # Step 4: LLM 提取
         extraction_result = self.extractor.extract(
             markdown_text=parse_result.markdown,
             cleaned_text=extraction_text,
@@ -183,15 +215,12 @@ class AnalysisPipeline:
 
         paper_data = extraction_result.data
 
-        # Step 5: 补全影响因子
         if self.if_searcher:
             self._supplement_impact_factor(paper_data)
 
-        # Step 6: 保存缓存
         if self.enable_cache and use_cache:
             self.cache_manager.save_data_cache(md5, paper_data.model_dump())
 
-        # 记录处理时间
         processing_time = time.time() - start_time
         self.logger.info(f"[完成] {pdf_name} ({processing_time:.1f}s)")
 
@@ -208,9 +237,9 @@ class AnalysisPipeline:
 
         优先使用 MinerU，失败则回退到基础解析。
         """
-        # 检查 OCR 缓存
-        if self.enable_cache and use_cache and self.cache_manager.has_ocr_cache(md5):
-            cached_text = self.cache_manager.load_ocr_cache(md5) or ""
+        # 检查 Markdown 缓存
+        if self.enable_cache and use_cache and self.cache_manager.has_markdown_cache(md5):
+            cached_text = self.cache_manager.load_markdown_cache(md5) or ""
             return ParseResult(
                 markdown=cached_text,
                 raw_text=cached_text,
@@ -223,9 +252,9 @@ class AnalysisPipeline:
             try:
                 result = self.parser.parse(pdf_path)
                 if result.success and result.markdown:
-                    # 保存 OCR 缓存
+                    # 保存 Markdown 缓存
                     if self.enable_cache:
-                        self.cache_manager.save_ocr_cache(md5, result.markdown)
+                        self.cache_manager.save_markdown_cache(md5, result.markdown)
                     return result
             except Exception as e:
                 self.logger.warning(f"[MinerU] 解析失败: {e}, 回退到基础解析")
@@ -266,6 +295,7 @@ class AnalysisPipeline:
         pdf_files: List[Path],
         max_pages: Optional[int] = None,
         use_cache: bool = True,
+        batch_size: int = 1,
     ) -> Tuple[List[PaperData], List[Dict[str, Any]], List[Tuple[Path, PaperData]]]:
         """
         批量处理 PDF 文件
@@ -282,19 +312,87 @@ class AnalysisPipeline:
         errors: List[Dict[str, Any]] = []
         processed_items: List[Tuple[Path, PaperData]] = []
 
-        for pdf_path in tqdm(pdf_files, desc="处理 PDF"):
-            paper_data, error_info = self.process_pdf(pdf_path, max_pages, use_cache)
+        pending_files: List[Tuple[Path, str]] = []
 
-            if paper_data:
-                results.append(paper_data)
-                processed_items.append((pdf_path, paper_data))
-            elif error_info:
-                errors.append(error_info)
-                self.error_logger.log_error(
-                    error_info["pdf_name"],
-                    Exception(error_info["error_message"]),
-                    context=error_info.get("context", "PDF处理"),
-                )
+        with tqdm(total=len(pdf_files), desc="处理 PDF") as progress_bar:
+            for pdf_path in pdf_files:
+                md5 = calculate_md5(pdf_path) if self.enable_cache else ""
+                if self.enable_cache and use_cache and self.cache_manager.has_data_cache(md5):
+                    self.logger.info(f"[缓存命中] {pdf_path.name}")
+                    cached_result = self.cache_manager.load_data_cache(md5)
+                    if cached_result:
+                        try:
+                            paper_data = PaperData(**cached_result)
+                            results.append(paper_data)
+                            processed_items.append((pdf_path, paper_data))
+                            progress_bar.update(1)
+                            continue
+                        except Exception:
+                            pass
+                pending_files.append((pdf_path, md5))
+
+            use_mineru_batch = (
+                bool(pending_files)
+                and self.parser
+                and isinstance(self.parser, MinerUParser)
+                and self.parser.mode == "api"
+                and batch_size > 1
+                and len(pending_files) > 1
+                and hasattr(self.parser, "parse_batch")
+            )
+
+            if use_mineru_batch:
+                total_batches = ceil(len(pending_files) / batch_size)
+                for batch_index, batch_items in enumerate(self._chunk_items(pending_files, batch_size), start=1):
+                    batch_paths = [pdf_path for pdf_path, _ in batch_items]
+                    self.logger.info(
+                        f"[MinerU 批量] 第 {batch_index}/{total_batches} 批，文件数 {len(batch_paths)}"
+                    )
+                    try:
+                        parse_results = self.parser.parse_batch(
+                            batch_paths,
+                            progress_callback=lambda info, batch_index=batch_index, total_batches=total_batches:
+                                progress_bar.set_postfix_str(
+                                    f"批次 {batch_index}/{total_batches} | 完成 {info.get('done', 0)}/{info.get('total', 0)} | 运行中 {info.get('running', 0)}"
+                                ),
+                        )
+                    except Exception as e:
+                        self.logger.warning(f"[MinerU 批量] 批量解析失败，回退逐篇处理: {e}")
+                        parse_results = {}
+
+                    for pdf_path, md5 in batch_items:
+                        parse_result = parse_results.get(pdf_path)
+                        if parse_result and parse_result.success:
+                            paper_data, error_info = self._extract_from_parse_result(
+                                pdf_path=pdf_path,
+                                parse_result=parse_result,
+                                md5=md5,
+                                use_cache=use_cache,
+                            )
+                        else:
+                            paper_data, error_info = self.process_pdf(pdf_path, max_pages, use_cache)
+
+                        self._collect_batch_item_result(
+                            pdf_path,
+                            paper_data,
+                            error_info,
+                            results,
+                            errors,
+                            processed_items,
+                        )
+                        progress_bar.update(1)
+            else:
+                for pdf_path, _ in pending_files:
+                    paper_data, error_info = self.process_pdf(pdf_path, max_pages, use_cache)
+                    self._collect_batch_item_result(
+                        pdf_path,
+                        paper_data,
+                        error_info,
+                        results,
+                        errors,
+                        processed_items,
+                    )
+                    progress_bar.update(1)
 
         return results, errors, processed_items
 
@@ -307,6 +405,8 @@ class AnalysisPipeline:
         sort_by_if: bool = True,
         rename_pdfs: bool = False,
         rename_template: Optional[str] = None,
+        pdf_files: Optional[List[Path]] = None,
+        batch_size: int = 1,
     ) -> Dict[str, Any]:
         """
         运行分析管线
@@ -326,12 +426,13 @@ class AnalysisPipeline:
         pdf_dir = Path(pdf_dir)
 
         # 收集 PDF 文件
-        if recursive:
-            pdf_files = list(pdf_dir.rglob("*.pdf"))
-        else:
-            pdf_files = list(pdf_dir.glob("*.pdf"))
+        if pdf_files is None:
+            if recursive:
+                pdf_files = list(pdf_dir.rglob("*.pdf"))
+            else:
+                pdf_files = list(pdf_dir.glob("*.pdf"))
 
-        pdf_files = [f for f in pdf_files if f.is_file()]
+        pdf_files = [Path(f) for f in pdf_files if Path(f).is_file()]
         self.logger.info(f"找到 {len(pdf_files)} 个 PDF 文件")
 
         if not pdf_files:
@@ -340,7 +441,7 @@ class AnalysisPipeline:
 
         # 批量处理
         results, errors, processed_items = self.process_batch(
-            pdf_files, max_pages, use_cache
+            pdf_files, max_pages, use_cache, batch_size=batch_size
         )
 
         # 重命名 PDF
@@ -351,7 +452,7 @@ class AnalysisPipeline:
             )
 
         # 生成报告
-        report_files = self._generate_reports(results, sort_by_if)
+        report_files = self._generate_reports(processed_items, sort_by_if)
 
         # 保存错误日志
         if self.error_logger.errors:
@@ -408,7 +509,7 @@ class AnalysisPipeline:
 
     def _generate_reports(
         self,
-        results: List[PaperData],
+        processed_items: List[Tuple[Path, PaperData]],
         sort_by_if: bool,
     ) -> Dict[str, str]:
         """生成报告"""
@@ -417,11 +518,21 @@ class AnalysisPipeline:
         output_config = self.config.get("output", {})
         formats = output_config.get("format", ["excel"])
 
-        if not results:
+        if not processed_items:
             return report_files
 
-        # 转换为字典格式
-        dict_results = [r.to_excel_row() for r in results]
+        dict_results = []
+        json_results = []
+        for pdf_path, paper_data in processed_items:
+            row = paper_data.to_excel_row()
+            row["File"] = pdf_path.name
+            row["URL"] = pdf_path.resolve().as_uri()
+            dict_results.append(row)
+
+            json_row = paper_data.model_dump()
+            json_row["File"] = pdf_path.name
+            json_row["URL"] = pdf_path.resolve().as_uri()
+            json_results.append(json_row)
 
         # 生成 Excel
         if "excel" in formats:
@@ -431,7 +542,6 @@ class AnalysisPipeline:
 
         # 生成 JSON
         if "json" in formats:
-            json_results = [r.model_dump() for r in results]
             json_path = self.reporter.generate_json_report(json_results, sort_by_if=sort_by_if)
             if json_path:
                 report_files["json"] = str(json_path)
@@ -461,6 +571,36 @@ class AnalysisPipeline:
             "error_message": error_message,
             "context": context,
         }
+
+    def _collect_batch_item_result(
+        self,
+        pdf_path: Path,
+        paper_data: Optional[PaperData],
+        error_info: Optional[Dict[str, Any]],
+        results: List[PaperData],
+        errors: List[Dict[str, Any]],
+        processed_items: List[Tuple[Path, PaperData]],
+    ) -> None:
+        """收集批量处理单个文件的结果。"""
+        if paper_data:
+            results.append(paper_data)
+            processed_items.append((pdf_path, paper_data))
+            return
+
+        if error_info:
+            errors.append(error_info)
+            self.error_logger.log_error(
+                error_info["pdf_name"],
+                Exception(error_info["error_message"]),
+                context=error_info.get("context", "PDF处理"),
+            )
+
+    @staticmethod
+    def _chunk_items(items: List[Tuple[Path, str]], chunk_size: int) -> List[List[Tuple[Path, str]]]:
+        """按批次切分列表。"""
+        if chunk_size <= 0:
+            chunk_size = 1
+        return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
 
     def cleanup_temp_files(self):
         """清理临时文件"""

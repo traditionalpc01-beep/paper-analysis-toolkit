@@ -21,41 +21,49 @@ class ReportGenerator:
     - 多器件数据列（结构、EQE、CIE、寿命）使用 \n 换行拼接
     """
 
-    FIELD_MAPPING = {
-        "File": ("File",),
-        "URL": ("URL",),
-        "期刊名称": ("journal_name", "期刊", "期刊名称"),
-        "影响因子": ("影响因子", "impact_factor"),
-        "作者": ("authors", "作者"),
-        "论文标题": ("title", "标题", "论文标题"),
-        "器件结构": ("device_structure", "器件结构", "结构"),
-        "EQE(外量子效率)": ("eqe", "EQE", "外量子效率"),
-        "色度坐标": ("cie", "CIE", "色度坐标"),
-        "寿命": ("lifetime", "寿命"),
-        "补充信息": ("supplementary_info", "补充信息"),
-    }
-    
-    # 报告列定义 - 按照 PRD 3.0 规范排序
-    REPORT_HEADERS = [
-        "File",
-        "URL",
-        "期刊名称",
-        "影响因子",
-        "作者",
-        "论文标题",
-        "器件结构",
-        "EQE(外量子效率)",
-        "色度坐标",
-        "寿命",
-        "最高EQE",
-        "优化策略",
-        "优化详情",
-        "关键发现",
-        "EQE原文",
-        "CIE原文",
-        "寿命原文",
-        "结构原文",
+    REPORT_COLUMNS = [
+        ("文件名 File", "file"),
+        ("文件地址 URL", "url"),
+        ("期刊名称 Journal", "journal"),
+        ("影响因子 Impact Factor", "impact_factor"),
+        ("作者 Authors", "authors"),
+        ("论文标题 Title", "title"),
+        ("器件结构 Device Structure", "structure"),
+        ("EQE(外量子效率) EQE", "eqe"),
+        ("色度坐标 CIE", "cie"),
+        ("寿命 Lifetime", "lifetime"),
+        ("最高EQE Best EQE", "best_eqe"),
+        ("优化层级 Optimization Level", "optimization_level"),
+        ("优化策略 Strategy Summary", "optimization_strategy"),
+        ("优化详情 Optimization Details", "optimization_details"),
+        ("关键发现 Key Findings", "key_findings"),
+        ("EQE原文 EQE Source", "eqe_source"),
+        ("CIE原文 CIE Source", "cie_source"),
+        ("寿命原文 Lifetime Source", "lifetime_source"),
+        ("结构原文 Structure Source", "structure_source"),
     ]
+
+    FIELD_MAPPING = {
+        "file": ("File", "file", "文件", "文件名"),
+        "url": ("URL", "url", "文件地址"),
+        "journal": ("journal_name", "期刊", "期刊名称"),
+        "impact_factor": ("影响因子", "impact_factor"),
+        "authors": ("authors", "作者"),
+        "title": ("title", "标题", "论文标题"),
+        "structure": ("器件结构", "device_structure", "结构"),
+        "eqe": ("EQE", "eqe", "外量子效率"),
+        "cie": ("CIE", "cie", "色度坐标"),
+        "lifetime": ("寿命", "lifetime"),
+        "best_eqe": ("最高EQE", "best_eqe"),
+        "optimization_level": ("优化层级", "optimization_level"),
+        "optimization_strategy": ("优化策略", "optimization_strategy"),
+        "optimization_details": ("优化详情",),
+        "key_findings": ("关键发现",),
+        "eqe_source": ("EQE原文", "eqe_source"),
+        "cie_source": ("CIE原文", "cie_source"),
+        "lifetime_source": ("寿命原文", "lifetime_source"),
+        "structure_source": ("结构原文", "structure_source"),
+    }
     
     def __init__(self, output_dir: Union[str, Path]):
         """
@@ -86,9 +94,9 @@ class ReportGenerator:
         """
         # 生成文件名
         if output_filename is None:
-            output_filename = "Paper_Analysis_Report.xlsx"
-        
-        output_path = self.output_dir / output_filename
+            output_filename = self._build_default_filename("xlsx")
+
+        output_path = self._build_unique_output_path(output_filename)
         
         # 创建工作簿
         wb = openpyxl.Workbook()
@@ -107,7 +115,7 @@ class ReportGenerator:
         )
         
         # 写入表头
-        for col, header in enumerate(self.REPORT_HEADERS, 1):
+        for col, (header, _) in enumerate(self.REPORT_COLUMNS, 1):
             cell = ws.cell(row=1, column=col, value=header)
             cell.font = header_font
             cell.fill = header_fill
@@ -120,41 +128,42 @@ class ReportGenerator:
         
         # 写入数据
         for row_idx, result in enumerate(results, 2):
-            for col_idx, header in enumerate(self.REPORT_HEADERS, 1):
-                value = self._format_cell_value(result, header)
+            for col_idx, (_, field_key) in enumerate(self.REPORT_COLUMNS, 1):
+                value = self._format_cell_value(result, field_key)
                 cell = ws.cell(row=row_idx, column=col_idx, value=value)
                 cell.font = cell_font
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
                 cell.border = thin_border
                 
                 # 高亮有数据的关键指标列
-                if header in {"EQE(外量子效率)", "色度坐标", "寿命"} and value:
+                if field_key in {"eqe", "cie", "lifetime"} and value:
                     cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
         
         # 设置列宽 - 按照 PRD 3.0 规范
         column_widths = {
-            "File": 30,
-            "URL": 40,
-            "期刊名称": 25,
-            "影响因子": 12,
-            "作者": 25,
-            "论文标题": 50,
-            "器件结构": 45,  # 多器件数据可能较长
-            "EQE(外量子效率)": 20,
-            "色度坐标": 20,
-            "寿命": 20,
-            "最高EQE": 12,
-            "优化策略": 40,
-            "优化详情": 40,
-            "关键发现": 40,
-            "EQE原文": 50,
-            "CIE原文": 50,
-            "寿命原文": 50,
-            "结构原文": 50,
+            "file": 30,
+            "url": 45,
+            "journal": 28,
+            "impact_factor": 16,
+            "authors": 25,
+            "title": 50,
+            "structure": 45,
+            "eqe": 20,
+            "cie": 20,
+            "lifetime": 22,
+            "best_eqe": 16,
+            "optimization_level": 24,
+            "optimization_strategy": 40,
+            "optimization_details": 40,
+            "key_findings": 40,
+            "eqe_source": 50,
+            "cie_source": 50,
+            "lifetime_source": 50,
+            "structure_source": 50,
         }
-        
-        for col_idx, header in enumerate(self.REPORT_HEADERS, 1):
-            width = column_widths.get(header, 20)
+
+        for col_idx, (_, field_key) in enumerate(self.REPORT_COLUMNS, 1):
+            width = column_widths.get(field_key, 20)
             ws.column_dimensions[get_column_letter(col_idx)].width = width
         
         # 设置行高
@@ -171,7 +180,7 @@ class ReportGenerator:
         
         return output_path
     
-    def _format_cell_value(self, result: dict, header: str) -> str:
+    def _format_cell_value(self, result: dict, field_key: str) -> str:
         """
         格式化单元格值
         
@@ -181,57 +190,42 @@ class ReportGenerator:
         
         Args:
             result: 提取结果
-            header: 列名
+            field_key: 规范化字段名
         
         Returns:
             格式化后的值
         """
         # 多器件数据列 - 已在 PaperData.to_excel_row() 中处理为换行拼接格式
-        if header == "器件结构":
-            return result.get("器件结构") or result.get("device_structure") or ""
-        
-        if header == "EQE(外量子效率)":
-            return result.get("EQE") or result.get("eqe") or ""
-        
-        if header == "色度坐标":
-            return result.get("CIE") or result.get("cie") or ""
-        
-        if header == "寿命":
-            return result.get("寿命") or result.get("lifetime") or ""
-        
-        # 最高 EQE
-        if header == "最高EQE":
-            return result.get("最高EQE") or result.get("best_eqe") or ""
-        
-        # 优化策略相关
-        if header == "优化策略":
-            return result.get("优化策略") or result.get("optimization_strategy") or ""
-        
-        if header == "优化详情":
+        if field_key == "optimization_level":
+            optimization = result.get("optimization", {}) if isinstance(result.get("optimization"), dict) else {}
+            return (
+                result.get("优化层级")
+                or result.get("optimization_level")
+                or optimization.get("level")
+                or ""
+            )
+
+        if field_key == "optimization_strategy":
+            optimization = result.get("optimization", {}) if isinstance(result.get("optimization"), dict) else {}
+            return (
+                result.get("优化策略")
+                or result.get("optimization_strategy")
+                or optimization.get("strategy")
+                or ""
+            )
+
+        if field_key == "optimization_details":
             return result.get("优化详情") or ""
-        
-        if header == "关键发现":
-            return result.get("关键发现") or ""
-        
-        # 数据溯源原文列
-        if header == "EQE原文":
-            return result.get("EQE原文") or result.get("eqe_source") or ""
-        
-        if header == "CIE原文":
-            return result.get("CIE原文") or result.get("cie_source") or ""
-        
-        if header == "寿命原文":
-            return result.get("寿命原文") or result.get("lifetime_source") or ""
-        
-        if header == "结构原文":
-            return result.get("结构原文") or result.get("structure_source") or ""
-        
-        # 一般字段
-        value = self._get_mapped_value(result, header)
+
+        if field_key == "key_findings":
+            optimization = result.get("optimization", {}) if isinstance(result.get("optimization"), dict) else {}
+            return result.get("关键发现") or optimization.get("key_findings") or ""
+
+        value = self._get_mapped_value(result, field_key)
         if isinstance(value, (list, dict)):
             return json.dumps(value, ensure_ascii=False)
 
-        if header == "影响因子":
+        if field_key == "impact_factor":
             return self._coerce_if_value(value)
 
         return str(value) if value not in (None, "") else ""
@@ -254,9 +248,9 @@ class ReportGenerator:
             生成的文件路径
         """
         if output_filename is None:
-            output_filename = "Paper_Analysis_Report.json"
-        
-        output_path = self.output_dir / output_filename
+            output_filename = self._build_default_filename("json")
+
+        output_path = self._build_unique_output_path(output_filename)
         
         if sort_by_if:
             results = sorted(results, key=self._sort_key_by_if, reverse=True)
@@ -312,14 +306,33 @@ class ReportGenerator:
         
         return output_path
 
-    def _get_mapped_value(self, result: dict, header: str):
-        for key in self.FIELD_MAPPING.get(header, (header,)):
+    def _get_mapped_value(self, result: dict, field_key: str):
+        for key in self.FIELD_MAPPING.get(field_key, (field_key,)):
             if key in result and result[key] not in (None, ""):
                 return result[key]
         return ""
 
     def _sort_key_by_if(self, result: dict) -> float:
-        return self._coerce_if_value(self._get_mapped_value(result, "影响因子"))
+        return self._coerce_if_value(self._get_mapped_value(result, "impact_factor"))
+
+    def _build_default_filename(self, extension: str) -> str:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name = f"论文分析报告_{timestamp}"
+        return f"{base_name}.{extension}"
+
+    def _build_unique_output_path(self, output_filename: str) -> Path:
+        output_path = self.output_dir / output_filename
+        if not output_path.exists():
+            return output_path
+
+        stem = output_path.stem
+        suffix = output_path.suffix
+        counter = 1
+        while True:
+            candidate = self.output_dir / f"{stem}_{counter}{suffix}"
+            if not candidate.exists():
+                return candidate
+            counter += 1
 
     @staticmethod
     def _coerce_if_value(value) -> float:
