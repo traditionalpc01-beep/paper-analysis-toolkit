@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Optional, Union
 
 import openpyxl
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -27,6 +29,7 @@ class ReportGenerator:
         ("期刊名称 Journal", "journal"),
         ("影响因子 Impact Factor", "impact_factor"),
         ("作者 Authors", "authors"),
+        ("处理结果/简述 Processing Status", "processing_status"),
         ("论文标题 Title", "title"),
         ("器件结构 Device Structure", "structure"),
         ("EQE(外量子效率) EQE", "eqe"),
@@ -49,6 +52,7 @@ class ReportGenerator:
         "journal": ("journal_name", "期刊", "期刊名称"),
         "impact_factor": ("影响因子", "impact_factor"),
         "authors": ("authors", "作者"),
+        "processing_status": ("processing_status", "处理结果/简述", "处理结果", "简述"),
         "title": ("title", "标题", "论文标题"),
         "structure": ("器件结构", "device_structure", "结构"),
         "eqe": ("EQE", "eqe", "外量子效率"),
@@ -128,16 +132,27 @@ class ReportGenerator:
         
         # 写入数据
         for row_idx, result in enumerate(results, 2):
+            row_cells = []
             for col_idx, (_, field_key) in enumerate(self.REPORT_COLUMNS, 1):
                 value = self._format_cell_value(result, field_key)
-                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell = ws.cell(row=row_idx, column=col_idx)
+                rich_value = self._build_rich_text_value(value)
+                cell.value = rich_value if rich_value is not None else value
                 cell.font = cell_font
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
                 cell.border = thin_border
+                row_cells.append(cell)
                 
                 # 高亮有数据的关键指标列
                 if field_key in {"eqe", "cie", "lifetime"} and value:
                     cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+
+            if self._count_abnormal_fields(result) > 3:
+                light_fill = PatternFill(start_color="FFF9EF", end_color="FFF9EF", fill_type="solid")
+                for cell in row_cells:
+                    if cell.fill.fill_type == "solid" and cell.fill.start_color.rgb in {"00E2EFDA", "FFE2EFDA"}:
+                        continue
+                    cell.fill = light_fill
         
         # 设置列宽 - 按照 PRD 3.0 规范
         column_widths = {
@@ -146,6 +161,7 @@ class ReportGenerator:
             "journal": 28,
             "impact_factor": 16,
             "authors": 25,
+            "processing_status": 34,
             "title": 50,
             "structure": 45,
             "eqe": 20,
@@ -195,6 +211,8 @@ class ReportGenerator:
         Returns:
             格式化后的值
         """
+        field_key = self._normalize_field_key(field_key)
+
         # 多器件数据列 - 已在 PaperData.to_excel_row() 中处理为换行拼接格式
         if field_key == "optimization_level":
             optimization = result.get("optimization", {}) if isinstance(result.get("optimization"), dict) else {}
@@ -345,3 +363,50 @@ class ReportGenerator:
                 return float(match.group(1))
 
         return 0.0
+
+    def _normalize_field_key(self, field_key: str) -> str:
+        if field_key in self.FIELD_MAPPING or field_key in dict(self.REPORT_COLUMNS):
+            return field_key
+
+        for canonical_key, aliases in self.FIELD_MAPPING.items():
+            if field_key in aliases:
+                return canonical_key
+
+        return field_key
+
+    @staticmethod
+    def _build_rich_text_value(value):
+        if not isinstance(value, str):
+            return None
+
+        lines = [line.strip() for line in value.splitlines() if line.strip()]
+        if len(lines) != 2:
+            return None
+
+        if not lines[0].startswith("中文：") or not lines[1].startswith("English:"):
+            return None
+
+        return CellRichText(
+            TextBlock(InlineFont(b=True), lines[0]),
+            "\n",
+            lines[1],
+        )
+
+    def _count_abnormal_fields(self, result: dict) -> int:
+        important_keys = [
+            "journal",
+            "impact_factor",
+            "title",
+            "structure",
+            "eqe",
+            "cie",
+            "lifetime",
+            "best_eqe",
+            "optimization_strategy",
+        ]
+        count = 0
+        for key in important_keys:
+            value = self._format_cell_value(result, key)
+            if value in ("", None, 0, 0.0):
+                count += 1
+        return count

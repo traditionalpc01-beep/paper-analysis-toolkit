@@ -481,6 +481,11 @@ def analyze(
         "--json",
         help="同时导出 JSON 报告",
     ),
+    bilingual: Optional[bool] = typer.Option(
+        None,
+        "--bilingual/--no-bilingual",
+        help="是否输出中英双语对照（默认中文处理；未指定时每次运行前确认）",
+    ),
     rename_pdfs: Optional[bool] = typer.Option(
         None,
         "--rename-pdfs/--no-rename-pdfs",
@@ -622,6 +627,16 @@ def analyze(
 
     if rename_pdfs is None:
         rename_pdfs = output_config.get("rename_pdfs", False)
+
+    if use_llm:
+        if bilingual is None:
+            bilingual = Confirm.ask(
+                "\n是否启用中英双语对照输出？（默认否，按中文处理）",
+                default=output_config.get("bilingual_text", False),
+            )
+        output_config["bilingual_text"] = bool(bilingual)
+    else:
+        output_config["bilingual_text"] = False
     
     # ========== 显示运行配置摘要 ==========
     console.print("\n" + "=" * 60)
@@ -641,6 +656,7 @@ def analyze(
         console.print(f"  批处理大小:  {batch_size}")
     console.print(f"  Web 搜索:    {'启用' if web_config.get('enabled') else '禁用'}")
     console.print(f"  缓存:        {'禁用' if no_cache else '启用'}")
+    console.print(f"  双语输出:    {'启用' if output_config.get('bilingual_text') else '禁用'}")
     console.print(f"  重命名 PDF:  {'启用' if rename_pdfs else '禁用'}")
     console.print("=" * 60)
     

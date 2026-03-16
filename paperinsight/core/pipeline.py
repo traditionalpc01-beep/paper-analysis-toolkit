@@ -153,6 +153,7 @@ class AnalysisPipeline:
                 "ParseFailed",
                 parse_result.error_message or "PDF 解析失败",
                 "PDF解析",
+                pdf_path=str(pdf_path),
             )
 
         return self._extract_from_parse_result(
@@ -197,6 +198,7 @@ class AnalysisPipeline:
                 "NoContentAfterCleaning",
                 "清洗后无有效内容",
                 "文本清洗",
+                pdf_path=str(pdf_path),
             )
 
         extraction_result = self.extractor.extract(
@@ -211,6 +213,7 @@ class AnalysisPipeline:
                 "ExtractionFailed",
                 extraction_result.error_message or "数据提取失败",
                 "数据提取",
+                pdf_path=str(pdf_path),
             )
 
         paper_data = extraction_result.data
@@ -276,17 +279,32 @@ class AnalysisPipeline:
 
     def _supplement_impact_factor(self, paper_data: PaperData) -> None:
         """补全影响因子"""
-        if paper_data.paper_info.impact_factor:
-            return
-
         journal_name = paper_data.paper_info.journal_name
         if not journal_name:
             return
 
         try:
-            if_value = self.if_searcher.search_impact_factor(journal_name)
-            if if_value:
-                paper_data.paper_info.impact_factor = if_value
+            current_if = paper_data.paper_info.impact_factor
+            web_config = self.config.get("web_search", {})
+            should_correct_existing = bool(web_config.get("correct_existing_impact_factor", True))
+
+            if current_if and not should_correct_existing and 0.1 <= current_if <= 200:
+                return
+
+            matched = self.if_searcher.lookup_impact_factor(journal_name)
+            if matched is None:
+                return
+
+            if current_if is None or current_if <= 0:
+                paper_data.paper_info.impact_factor = matched.impact_factor
+                return
+
+            if current_if < 0.1 or current_if > 200:
+                paper_data.paper_info.impact_factor = matched.impact_factor
+                return
+
+            if should_correct_existing and abs(current_if - matched.impact_factor) >= 0.5:
+                paper_data.paper_info.impact_factor = matched.impact_factor
         except Exception as e:
             self.logger.warning(f"[IF搜索] 失败: {e}")
 
@@ -452,7 +470,7 @@ class AnalysisPipeline:
             )
 
         # 生成报告
-        report_files = self._generate_reports(processed_items, sort_by_if)
+        report_files = self._generate_reports(processed_items, errors, sort_by_if)
 
         # 保存错误日志
         if self.error_logger.errors:
@@ -510,6 +528,7 @@ class AnalysisPipeline:
     def _generate_reports(
         self,
         processed_items: List[Tuple[Path, PaperData]],
+        errors: List[Dict[str, Any]],
         sort_by_if: bool,
     ) -> Dict[str, str]:
         """生成报告"""
@@ -527,12 +546,48 @@ class AnalysisPipeline:
             row = paper_data.to_excel_row()
             row["File"] = pdf_path.name
             row["URL"] = pdf_path.resolve().as_uri()
+            row["processing_status"] = self._build_processing_summary(paper_data)
             dict_results.append(row)
 
             json_row = paper_data.model_dump()
             json_row["File"] = pdf_path.name
             json_row["URL"] = pdf_path.resolve().as_uri()
+            json_row["processing_status"] = row["processing_status"]
             json_results.append(json_row)
+
+        for error in errors:
+            error_row = {
+                "File": error.get("pdf_name", ""),
+                "URL": Path(error["pdf_path"]).resolve().as_uri() if error.get("pdf_path") else "",
+                "processing_status": self._build_error_summary(error),
+                "标题": "",
+                "期刊": "",
+                "影响因子": "",
+                "作者": "",
+                "器件结构": "",
+                "EQE": "",
+                "CIE": "",
+                "寿命": "",
+                "最高EQE": "",
+                "优化层级": "",
+                "优化策略": "",
+                "优化详情": "",
+                "关键发现": "",
+                "EQE原文": "",
+                "CIE原文": "",
+                "寿命原文": "",
+                "结构原文": "",
+            }
+            dict_results.append(error_row)
+
+            json_results.append(
+                {
+                    "File": error.get("pdf_name", ""),
+                    "URL": Path(error["pdf_path"]).resolve().as_uri() if error.get("pdf_path") else "",
+                    "processing_status": error_row["processing_status"],
+                    "error": error,
+                }
+            )
 
         # 生成 Excel
         if "excel" in formats:
@@ -563,14 +618,48 @@ class AnalysisPipeline:
         error_type: str,
         error_message: str,
         context: str = "PDF处理",
+        pdf_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """构建错误信息"""
         return {
             "pdf_name": pdf_name,
+            "pdf_path": pdf_path,
             "error_type": error_type,
             "error_message": error_message,
             "context": context,
         }
+
+    @staticmethod
+    def _build_processing_summary(paper_data: PaperData) -> str:
+        info = paper_data.paper_info
+        missing = []
+        if not info.journal_name:
+            missing.append("期刊")
+        if info.impact_factor in (None, 0):
+            missing.append("影响因子")
+        if not paper_data.devices:
+            missing.append("器件数据")
+        else:
+            best_device = paper_data.get_best_device()
+            if not best_device or not best_device.eqe:
+                missing.append("EQE")
+            if not best_device or not best_device.structure:
+                missing.append("结构")
+
+        if not missing:
+            return "处理成功：核心字段解析完整"
+
+        if len(missing) >= 4:
+            return "部分解析异常：缺少 " + "、".join(missing[:5])
+        return "处理成功：待补充 " + "、".join(missing)
+
+    @staticmethod
+    def _build_error_summary(error: Dict[str, Any]) -> str:
+        context = error.get("context", "处理流程")
+        message = error.get("error_message", "未知错误").strip()
+        if len(message) > 70:
+            message = message[:67].rstrip() + "..."
+        return f"处理失败：{context} - {message}"
 
     def _collect_batch_item_result(
         self,
