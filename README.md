@@ -1,322 +1,243 @@
 # PaperInsight CLI
 
-智能科研论文分析工具 - 自动提取 PDF 论文关键信息并生成报告
+智能科研论文分析工具 - 自动提取 PDF 论文关键信息、补全影响因子并生成排序报告。
 
-版本: 2.0.0
+当前版本：`2.0.0`
 
-## 功能特点
+## 这版能做什么
 
-- 自动提取期刊名称、标题、作者等信息
-- 支持百度 OCR API 进行扫描版 PDF 识别
-- 集成 LLM 进行语义提取(支持 OpenAI、DeepSeek)
-- 自动补全期刊影响因子(支持 Web 搜索)
-- 智能缓存系统,支持断点续传
-- 生成按影响因子排序的 Excel 报告
-- 支持多器件参数提取和数据溯源
+- 扫描目录中的 PDF，支持递归处理
+- 优先提取原生文本，失败或明显乱码时再走 OCR 回退
+- 支持 PaddleX API (百度 AI Studio)、LLM 语义提取
+- 自动补全期刊影响因子，并按 IF 降序生成报告
+- 支持多器件参数、数据溯源、错误隔离和缓存复用
+- 可选把处理完成的 PDF 重命名为规范格式
 
 ## 快速开始
 
-### 1. 安装
+### 1. 安装依赖
 
 ```bash
-# 克隆仓库
-git clone https://github.com/yourusername/paperinsight.git
-cd paperinsight
-
-# 安装核心依赖
 pip install -r requirements.txt
-
-# 可选: 安装 OCR 支持
-pip install paddlepaddle paddleocr
-
-# 可选: 安装 LLM 支持
-pip install openai
-
-# 安装项目
 pip install -e .
 ```
 
-### 2. 基本使用
+如果需要额外能力，可选安装：
 
 ```bash
-# 分析 PDF 目录
+# 本地 OCR
+pip install paddlepaddle paddleocr
+
+# OpenAI 客户端
+pip install openai
+```
+
+### 2. 启动引导
+
+首次运行建议按这个顺序：
+
+```bash
+paperinsight check
+paperinsight config
 paperinsight analyze ./pdfs
-
-# 递归扫描子目录
-paperinsight analyze ./pdfs --recursive
-
-# 指定输出目录
-paperinsight analyze ./pdfs --output ./reports
-
-# 使用智能 API 模式
-paperinsight analyze ./pdfs --mode api
-
-# 同时导出 JSON 报告
-paperinsight analyze ./pdfs --json
 ```
 
-### 3. 配置 API Key
-
-首次使用智能 API 模式时,会自动启动配置向导:
+如果你直接运行：
 
 ```bash
-paperinsight analyze ./pdfs --mode api
+paperinsight
 ```
 
-或手动配置:
+CLI 会显示启动引导，并给出建议命令。
+
+### 3. 配置能力
 
 ```bash
 paperinsight config
 ```
 
-配置文件位于 `~/.paperinsight/config.yaml`
+配置向导支持：
+
+- PaddleX API（百度 AI Studio）
+- LLM（OpenAI / DeepSeek）
+- Web 搜索补全影响因子
+
+配置文件默认保存在：`~/.paperinsight/config.yaml`
+
+### 4. 运行分析
+
+```bash
+# 分析一个目录
+paperinsight analyze ./pdfs
+
+# 递归扫描
+paperinsight analyze ./pdfs --recursive
+
+# 强制使用基础正则模式
+paperinsight analyze ./pdfs --mode regex
+
+# 启用 API 模式
+paperinsight analyze ./pdfs --mode api
+
+# 同时导出 JSON
+paperinsight analyze ./pdfs --json
+
+# 处理完成后重命名 PDF
+paperinsight analyze ./pdfs --rename-pdfs
+```
 
 ## 运行模式
 
-### 基础正则模式 (默认)
+### `auto`
 
-- 使用正则表达式提取信息
-- 无需 API Key
-- 速度快,准确度适中
+默认模式。
 
-### 智能 API 模式
+- 优先使用已配置的在线能力
+- 未配置在线能力时，自动回落到原生文本提取 / 基础正则模式
+- 适合大多数场景
 
-- 调用百度 OCR API 进行高精度识别
-- 调用 LLM 进行语义提取
-- 需要配置 API Key
-- 准确度高,消耗 API 额度
+### `api`
 
-```bash
-paperinsight analyze ./pdfs --mode api
-```
+显式使用智能能力。
 
-## 提取字段
+- 如果还没配置在线 OCR / LLM，CLI 会先进入配置向导
+- 适合追求提取精度的批处理场景
 
-| 字段 | 说明 |
-|------|------|
-| 期刊名称 | 从首页或页眉页脚提取 |
-| 影响因子 | 优先匹配 PDF 原文,其次通过 Web 查询 |
-| 论文标题 | 识别第一页最大字号文本 |
-| 作者 | 最多列出前 3 位 |
-| 器件结构 | 识别层级堆叠结构 |
-| EQE | 外量子效率(支持多器件) |
-| CIE | 色度坐标(支持多器件) |
-| 寿命 | T50/LT50(支持多器件) |
-| 数据溯源 | 附带原文出处句子 |
-| 优化层级和策略 | 总结优化方法(约 100 字) |
+### `regex`
 
-## 命令参考
+基础模式。
 
-### analyze
+- 不调用 OCR API 或 LLM
+- 速度快，适合先试跑
+- 对扫描版和复杂版式支持有限
 
-分析 PDF 论文
+## 输出内容
 
-```bash
-paperinsight analyze PDF_DIR [OPTIONS]
+默认会在输入目录下生成 `输出结果/` 文件夹，包含：
 
-选项:
-  --output, -o PATH    输出目录
-  --recursive, -r      递归扫描子目录
-  --max-pages INT      最大读取页数(0 表示不限制)
-  --mode, -m TEXT      运行模式: auto, api, regex
-  --no-cache           禁用缓存
-  --json               同时导出 JSON 报告
-```
+- `Paper_Analysis_Report.xlsx`
+- `Paper_Analysis_Report.json`（当使用 `--json` 时）
+- `error_log.txt`（当存在失败项时）
 
-### config
+Excel 报告按“影响因子”降序排列，主要字段包括：
 
-配置 API Key
+- 期刊名称
+- 影响因子
+- 论文标题
+- 作者
+- 器件结构
+- EQE / CIE / 寿命
+- 数据溯源
+- 优化层级
+- 优化策略
+
+## 常用命令
 
 ```bash
+paperinsight --help
+paperinsight analyze --help
 paperinsight config
-```
-
-### cache-info
-
-显示缓存信息
-
-```bash
+paperinsight check
+paperinsight doctor
 paperinsight cache-info
-```
-
-### clear-cache
-
-清除所有缓存
-
-```bash
 paperinsight clear-cache
-```
-
-### version
-
-显示版本信息
-
-```bash
 paperinsight version
 ```
 
-## 环境检查
+## 缓存机制
+
+工具默认启用缓存：
+
+- `[MD5]_data.json`：结构化提取结果
+- `[MD5]_ocr.txt`：OCR 文本缓存
+
+重复运行时会自动复用缓存，避免重复 OCR 和重复分析。
+
+## 配置文件结构
+
+一个典型的 `~/.paperinsight/config.yaml` 如下：
+
+```yaml
+paddlex:
+  enabled: false
+  token: ""
+  model: "PaddleOCR-VL-1.5"
+  use_doc_orientation: false
+  use_doc_unwarping: false
+  use_layout_detection: true
+  use_chart_recognition: false
+  timeout: 300
+  poll_interval: 5
+
+llm:
+  enabled: false
+  provider: "openai"
+  api_key: ""
+  model: "gpt-4o"
+  base_url: ""
+  timeout: 120
+
+web_search:
+  enabled: true
+  timeout: 30
+
+cache:
+  enabled: true
+  directory: ".cache"
+
+output:
+  format: ["excel"]
+  sort_by_if: true
+  generate_error_log: true
+  rename_pdfs: false
+  rename_template: "[{year}_{impact_factor}_{journal}]_{title}.pdf"
+
+pdf:
+  max_pages: 0
+  text_ratio_threshold: 0.1
+```
+
+## 诊断与排错
 
 ### 快速检查
 
 ```bash
-# 快速检查必要条件
 paperinsight check
+```
 
-# 完整环境诊断
+用于检查：
+
+- Python 版本
+- 核心依赖
+- 网络连接
+- 本地 OCR 可用性
+
+### 完整诊断
+
+```bash
 paperinsight doctor
 ```
 
-### 启动时自动检查
+用于检查：
 
-启动脚本会自动检测运行环境:
+- 配置文件是否完整
+- 在线 API 是否已启用
+- 推荐的运行模式
 
-1. **检查 Python 环境**: 确保版本 >= 3.8
-2. **检查网络连接**: 判断是否可以使用在线 API
-3. **检查依赖完整性**: 确保核心依赖已安装
-4. **检查本地 OCR**: 判断是否可以处理扫描版 PDF
+## 文档入口
 
-### 离线模式
-
-当检测到无法联网时:
-
-1. 如果本地 PaddleOCR 已安装 → 使用本地 OCR 处理
-2. 如果本地 OCR 不可用 → 仅处理包含文本层的 PDF
-
-### Windows 启动脚本
-
-```batch
-# 双击运行
-scripts\build.bat
-
-# 或命令行运行
-scripts\build.bat analyze ./pdfs
-```
-
-### Linux/macOS 启动脚本
-
-```bash
-# 添加执行权限
-chmod +x scripts/paperinsight.sh
-
-# 运行
-./scripts/paperinsight.sh analyze ./pdfs
-```
-
-## 缓存系统
-
-工具使用智能缓存系统提高效率:
-
-- `[MD5]_data.json`: 完整提取结果
-- `[MD5]_ocr.txt`: OCR 文本(可复用)
-
-重复运行时,会自动跳过已处理的文件。
-
-## 项目结构
-
-```
-paperinsight/
-├── cli.py                 # CLI 入口
-├── core/
-│   ├── cache.py          # 缓存管理
-│   ├── extractor.py      # 数据提取器
-│   ├── pipeline.py       # 处理管线
-│   └── reporter.py       # 报告生成器
-├── ocr/
-│   ├── baidu_api.py      # 百度 OCR API
-│   ├── local.py          # 本地 PaddleOCR
-│   └── base.py           # OCR 基类
-├── llm/
-│   ├── openai_client.py  # OpenAI 客户端
-│   ├── deepseek_client.py # DeepSeek 客户端
-│   ├── prompt_templates.py # Prompt 模板
-│   └── base.py           # LLM 基类
-├── web/
-│   └── impact_factor_search.py # 影响因子搜索
-└── utils/
-    ├── pdf_utils.py      # PDF 处理工具
-    ├── hash_utils.py     # 哈希工具
-    └── logger.py         # 日志系统
-```
-
-## 配置说明
-
-配置文件示例 (`~/.paperinsight/config.yaml`):
-
-```yaml
-# 百度 OCR API 配置
-baidu_ocr:
-  enabled: true
-  api_key: "your-api-key"
-  secret_key: "your-secret-key"
-
-# LLM 配置
-llm:
-  enabled: true
-  provider: "openai"
-  api_key: "your-api-key"
-  model: "gpt-4o"
-
-# Web 搜索配置
-web_search:
-  enabled: true
-```
-
-## API Key 获取
-
-### 百度 OCR API
-
-1. 访问 [百度智能云](https://console.bce.baidu.com/ai/#/ai/ocr/overview/index)
-2. 创建应用,获取 API Key 和 Secret Key
-3. 免费额度: 通用文字识别 500 次/天
-
-### OpenAI API
-
-1. 访问 [OpenAI Platform](https://platform.openai.com/api-keys)
-2. 创建 API Key
-3. 按使用量计费
-
-### DeepSeek API
-
-1. 访问 [DeepSeek Platform](https://platform.deepseek.com/api_keys)
-2. 创建 API Key
-3. 性价比高,中文友好
+- [快速开始指南](./使用文档/快速开始指南.md)
+- [使用示例](./使用文档/使用示例.md)
+- [高级配置说明](./使用文档/高级配置说明.md)
+- [常见问题解答](./使用文档/常见问题解答.md)
 
 ## 注意事项
 
-1. **PDF 质量**: 确保文件可读,扫描版需使用 OCR
-2. **API 额度**: 注意百度 OCR 和 LLM 的使用额度
-3. **数据准确性**: 自动提取的数据建议人工核对
-4. **网络要求**: Web 搜索和 API 模式需要网络连接
-
-## 版本历史
-
-### v2.0.0 (2026-03-13)
-
-- 完全重构为模块化架构
-- 新增百度 OCR API 支持
-- 新增 LLM 语义提取
-- 新增智能缓存系统
-- 新增 Web 搜索补全影响因子
-- 新增数据溯源字段
-- 重构 CLI 框架(Typer)
-- 改进异常隔离和错误日志
-
-### v1.4 (2026-03-13)
-
-- 新增缺失项报告导出
-- 支持递归扫描 PDF
-- 支持本地 PaddleOCR
+- API 模式依赖网络和有效凭证
+- 扫描版 PDF 建议至少配置一种 OCR 能力
+- 自动提取结果仍建议人工抽样复核
+- Web 搜索补全的影响因子可能受网站可用性影响
 
 ## 许可证
 
 MIT License
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request!
-
----
-
-**开发团队**: WorkBuddy AI Assistant  
-**最后更新**: 2026-03-13

@@ -33,6 +33,23 @@ env/
 # Output
 输出结果/
 
-# WSL
-*.sh
-run_wsl.bat
+# Cache
+.cache/
+.pytest_cache/
+*.pyc
+
+# Logs
+*.log
+error_log.txt
+
+# User Config (contains secrets)
+config/config.yaml
+
+# macOS
+.DS_Store
+.DS_Store?
+
+# Temporary Files
+*.tmp
+*.temp
+~*
