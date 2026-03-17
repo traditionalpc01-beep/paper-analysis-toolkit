@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 
 import requests
 
+from paperinsight.utils.journal_metadata import canonicalize_journal_title
 from paperinsight.web.journal_resolver import MJLJournalCandidate
 
 
@@ -42,29 +43,86 @@ class MJLImpactFactorFetcher:
         self.session.headers.setdefault("Referer", "https://mjl.clarivate.com/search-results")
         self.session.headers.setdefault("Authorization", "Bearer")
         self.session.headers.setdefault("x-1p-appid", "mjl")
+        self.fallback_impact_factors: dict[str, tuple[float, int, str]] = {}
+        self._register_fallback(
+            ["Advanced Materials", "Adv. Mater.", "Adv Mater"],
+            30.849,
+            2023,
+            "https://corporatesolutions.wiley.com/assets/media-kits/advanced-materials.pdf",
+        )
+        self._register_fallback(
+            [
+                "Advanced Functional Materials",
+                "Adv. Funct. Mater.",
+                "Adv Funct Mater",
+            ],
+            19.0,
+            2025,
+            "https://qa.store.wiley.com/en-ca/journals/Advanced%2BFunctional%2BMaterials-p-b16163028",
+        )
+        self._register_fallback(
+            [
+                "Journal of the American Chemical Society",
+                "J. Am. Chem. Soc.",
+                "J Am Chem Soc",
+            ],
+            15.7,
+            2025,
+            "https://pubs.acs.org/page/jacsat/about.html",
+        )
+        self._register_fallback(
+            ["Nano Letters", "Nano Lett."],
+            9.1,
+            2025,
+            "https://pubs.acs.org/page/nalefd/about.html",
+        )
+        self._register_fallback(
+            ["Small"],
+            13.3,
+            2022,
+            "https://www.wiley.com/content/dam/wiley-dotcom/en/b2b/research/corporate-solutions/pdf/infographics/science/semiconductor-en.pdf",
+        )
+        self._register_fallback(
+            ["Chemical Engineering Journal", "Chem. Eng. J.", "Chem Eng J"],
+            21.7,
+            2024,
+            "https://api.journals.elsevier.com/media/dxmf0zaq/cej-eceb-flyer.pdf",
+        )
+        self._register_fallback(
+            [
+                "Journal of Photochemistry and Photobiology C Photochemistry Reviews",
+                "J. Photochem. Photobiol. C-Photochem. Rev.",
+                "J Photochem Photobiol C Photochem Rev",
+            ],
+            13.6,
+            2024,
+            "https://www.sciencedirect.com/journal/journal-of-photochemistry-and-photobiology-c-photochemistry-reviews",
+        )
+        self._register_fallback(
+            ["Laser and Photonics Reviews", "Laser Photonics Reviews", "Laser Photonics Rev."],
+            11.0,
+            2024,
+            "https://onlinelibrary.wiley.com/page/journal/18638899/homepage/productinformation.html",
+        )
 
     def lookup(self, candidate: MJLJournalCandidate) -> ImpactFactorLookupResult:
         profile_url = self._build_profile_api_url(candidate)
         response = self.session.get(profile_url, timeout=self.timeout)
 
         if response.status_code in {401, 403}:
-            return ImpactFactorLookupResult(
+            return self._fallback_lookup(
+                candidate,
                 status="NO_ACCESS",
-                source_name="MJL_PROFILE_API",
-                source_url=profile_url,
+                default_url=profile_url,
                 error_message="Profile endpoint requires an authenticated MJL session.",
             )
         if response.status_code == 404:
-            return ImpactFactorLookupResult(
-                status="NO_MATCH",
-                source_name="MJL_PROFILE_API",
-                source_url=profile_url,
-            )
+            return self._fallback_lookup(candidate, status="NO_MATCH", default_url=profile_url)
         if response.status_code >= 400:
-            return ImpactFactorLookupResult(
+            return self._fallback_lookup(
+                candidate,
                 status="ERROR",
-                source_name="MJL_PROFILE_API",
-                source_url=profile_url,
+                default_url=profile_url,
                 error_message=f"HTTP {response.status_code}",
             )
 
@@ -80,10 +138,55 @@ class MJLImpactFactorFetcher:
                 year=year,
             )
 
+        return self._fallback_lookup(candidate, status="NOT_VISIBLE", default_url=profile_url)
+
+    def _register_fallback(
+        self,
+        titles: list[str],
+        impact_factor: float,
+        year: int,
+        source_url: str,
+    ) -> None:
+        for title in titles:
+            canonical = canonicalize_journal_title(title)
+            if canonical:
+                self.fallback_impact_factors[canonical] = (impact_factor, year, source_url)
+
+    def _fallback_lookup(
+        self,
+        candidate: MJLJournalCandidate,
+        *,
+        status: str,
+        default_url: str,
+        error_message: Optional[str] = None,
+    ) -> ImpactFactorLookupResult:
+        fallback = None
+        for title in (
+            candidate.display_title,
+            candidate.publication_title,
+        ):
+            canonical_title = canonicalize_journal_title(title)
+            if not canonical_title:
+                continue
+            fallback = self.fallback_impact_factors.get(canonical_title)
+            if fallback:
+                break
+        if not fallback:
+            return ImpactFactorLookupResult(
+                status=status,
+                source_name="MJL_PROFILE_API",
+                source_url=default_url,
+                error_message=error_message,
+            )
+
+        impact_factor, year, source_url = fallback
         return ImpactFactorLookupResult(
-            status="NOT_VISIBLE",
-            source_name="MJL_PROFILE_API",
-            source_url=profile_url,
+            status="OK",
+            source_name="CURATED_FALLBACK",
+            source_url=source_url,
+            impact_factor=impact_factor,
+            year=year,
+            error_message=error_message,
         )
 
     def _build_profile_api_url(self, candidate: MJLJournalCandidate) -> str:

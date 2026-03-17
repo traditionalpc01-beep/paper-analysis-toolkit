@@ -33,6 +33,9 @@ from paperinsight.utils.logger import ErrorLogger, setup_logger
 from paperinsight.utils.pdf_utils import extract_text_with_fallback
 from paperinsight.web.impact_factor_fetcher import MJLImpactFactorFetcher
 from paperinsight.web.journal_resolver import MJLJournalResolution, MJLJournalResolver
+from paperinsight.web.search_crawler_fetcher import SearchCrawlerFetcher
+from paperinsight.web.wos_journal_fetcher import WOSJournalFetcher
+from paperinsight.utils.journal_metadata import canonicalize_journal_title
 
 
 class AnalysisPipeline:
@@ -90,6 +93,26 @@ class AnalysisPipeline:
         self.if_fetcher = (
             MJLImpactFactorFetcher(timeout=timeout)
             if web_enabled and web_config.get("fetch_official_impact_factor", True)
+            else None
+        )
+        crawler_config = web_config.get("search_crawler", {})
+        self.search_crawler_fetcher = (
+            SearchCrawlerFetcher(
+                timeout=timeout,
+                market=str(crawler_config.get("market", "en-US")),
+            )
+            if web_enabled and crawler_config.get("enabled", True)
+            else None
+        )
+        wos_config = web_config.get("web_of_science", {})
+        wos_api_key = str(wos_config.get("api_key", "")).strip()
+        self.wos_if_fetcher = (
+            WOSJournalFetcher(
+                api_key=wos_api_key,
+                timeout=timeout,
+                base_url=wos_config.get("journals_api_url"),
+            )
+            if web_enabled and wos_config.get("enabled") and wos_api_key
             else None
         )
 
@@ -234,6 +257,18 @@ class AnalysisPipeline:
         journal_resolution = self._resolve_journal_metadata(paper_data)
         if self.if_fetcher:
             self._supplement_impact_factor(paper_data, journal_resolution)
+        if self._needs_lite_backfill(paper_data):
+            self.logger.info(
+                f"[LLM] 触发轻量补全: {pdf_name} | 缺失字段={','.join(self._collect_missing_core_fields(paper_data))}"
+            )
+            paper_data = self.extractor.lite_backfill_paper_info(
+                paper_data,
+                extraction_text,
+                parse_result,
+            )
+            journal_resolution = self._resolve_journal_metadata(paper_data)
+            if self.if_fetcher:
+                self._supplement_impact_factor(paper_data, journal_resolution)
 
         if self.enable_cache and use_cache:
             self.cache_manager.save_data_cache(md5, paper_data.model_dump())
@@ -242,6 +277,32 @@ class AnalysisPipeline:
         self.logger.info(f"[完成] {pdf_name} ({processing_time:.1f}s)")
 
         return paper_data, None
+
+    @staticmethod
+    def _needs_lite_backfill(paper_data: PaperData) -> bool:
+        paper_info = paper_data.paper_info
+        return any(
+            [
+                not paper_info.title,
+                not (paper_info.journal_name or paper_info.raw_journal_title),
+                paper_info.impact_factor in (None, 0),
+                not paper_info.year,
+            ]
+        )
+
+    @staticmethod
+    def _collect_missing_core_fields(paper_data: PaperData) -> list[str]:
+        paper_info = paper_data.paper_info
+        missing = []
+        if not paper_info.title:
+            missing.append("title")
+        if not (paper_info.journal_name or paper_info.raw_journal_title):
+            missing.append("journal")
+        if paper_info.impact_factor in (None, 0):
+            missing.append("impact_factor")
+        if not paper_info.year:
+            missing.append("year")
+        return missing
 
     def _parse_pdf(
         self,
@@ -320,7 +381,18 @@ class AnalysisPipeline:
         if resolution.match_method:
             paper_info.match_method = resolution.match_method
 
-        if resolution.candidate:
+        selected_candidate = self._select_journal_candidate(resolution, raw_journal_title)
+
+        if selected_candidate:
+            paper_info.matched_journal_title = (
+                selected_candidate.display_title or paper_info.matched_journal_title
+            )
+            paper_info.matched_issn = selected_candidate.issn or selected_candidate.eissn or paper_info.matched_issn
+            paper_info.journal_profile_url = selected_candidate.search_url
+            paper_info.journal_name = selected_candidate.display_title or paper_info.journal_name or raw_journal_title
+            if resolution.status != "OK":
+                paper_info.match_method = f"{paper_info.match_method or resolution.status}_selected"
+        elif resolution.candidate:
             paper_info.matched_journal_title = resolution.matched_journal_title
             paper_info.matched_issn = resolution.matched_issn
             paper_info.journal_profile_url = resolution.candidate.search_url
@@ -337,6 +409,29 @@ class AnalysisPipeline:
                 )
 
         return resolution
+
+    @staticmethod
+    def _select_journal_candidate(
+        resolution: MJLJournalResolution,
+        raw_journal_title: Optional[str],
+    ):
+        if resolution.candidate:
+            return resolution.candidate
+        if not resolution.candidates:
+            return None
+
+        raw_canonical = canonicalize_journal_title(raw_journal_title)
+        if raw_canonical:
+            exact_matches = [
+                candidate
+                for candidate in resolution.candidates
+                if canonicalize_journal_title(candidate.display_title) == raw_canonical
+            ]
+            if len(exact_matches) == 1:
+                return exact_matches[0]
+            if exact_matches:
+                return exact_matches[0]
+        return resolution.candidates[0]
 
     def _supplement_impact_factor(
         self,
@@ -362,7 +457,9 @@ class AnalysisPipeline:
             if resolution is None:
                 return
 
-            if resolution.status != "OK" or not resolution.candidate:
+            candidate = self._select_journal_candidate(resolution, journal_name)
+
+            if not candidate:
                 paper_info.impact_factor_source = "MJL_RESOLVER"
                 paper_info.impact_factor_status = resolution.status
                 return
@@ -370,7 +467,25 @@ class AnalysisPipeline:
             if not fetch_official_impact_factor:
                 return
 
-            fetch_result = self.if_fetcher.lookup(resolution.candidate)
+            fetch_result = self.if_fetcher.lookup(candidate)
+            if (
+                (fetch_result.status != "OK" or fetch_result.impact_factor is None)
+                and self.search_crawler_fetcher is not None
+            ):
+                fetch_result = self.search_crawler_fetcher.lookup(
+                    journal_title=paper_info.journal_name or paper_info.raw_journal_title,
+                    issn=paper_info.matched_issn or paper_info.raw_issn,
+                    eissn=paper_info.raw_eissn,
+                )
+            if (
+                (fetch_result.status != "OK" or fetch_result.impact_factor is None)
+                and self.wos_if_fetcher is not None
+            ):
+                fetch_result = self.wos_if_fetcher.lookup(
+                    journal_title=paper_info.journal_name or paper_info.raw_journal_title,
+                    issn=paper_info.matched_issn or paper_info.raw_issn,
+                    eissn=paper_info.raw_eissn,
+                )
             paper_info.impact_factor_source = fetch_result.source_name
             paper_info.impact_factor_status = fetch_result.status
 

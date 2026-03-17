@@ -36,7 +36,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # MinerU PDF 解析器配置（v3.0 新增）
     "mineru": {
         "enabled": True,
-        "mode": "cli",  # cli | api
+        "mode": "api",  # cli | api
         "token": "",  # API 模式需要
         "api_url": "https://mineru.net/api/v4",
         "timeout": 600,
@@ -60,9 +60,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # LLM 配置（v3.0 扩展）
     "llm": {
         "enabled": True,
-        "provider": "deepseek",  # openai | deepseek | wenxin
+        "provider": "longcat",  # longcat | openai | deepseek | wenxin
         "api_key": "",
-        "model": "deepseek-chat",
+        "model": "LongCat-Flash-Chat",
         "base_url": "",
         "timeout": 120,
         "max_retries": 3,
@@ -85,6 +85,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "longcat": {
             "model": "LongCat-Flash-Chat",
             "base_url": "https://api.longcat.chat/openai",
+            "backfill_model": "LongCat-Flash-Lite",
+            "enable_lite_backfill": True,
         },
     },
     # Web 搜索配置
@@ -94,6 +96,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "resolve_journal_metadata": True,
         "fetch_official_impact_factor": True,
         "correct_existing_impact_factor": True,
+        "search_crawler": {
+            "enabled": True,
+            "market": "en-US",
+        },
+        "web_of_science": {
+            "enabled": False,
+            "api_key": "",
+            "journals_api_url": "https://api.clarivate.com/apis/wos-journals/v1",
+        },
     },
     # 缓存配置
     "cache": {

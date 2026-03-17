@@ -32,8 +32,10 @@ from paperinsight.llm import create_llm_client
 from paperinsight.llm.prompt_templates import (
     format_bilingual_postprocess_prompt,
     format_extraction_prompt_v3,
+    format_lite_paper_info_backfill_prompt,
 )
 from paperinsight.utils.logger import setup_logger
+from paperinsight.utils.pdf_utils import PDFProcessor
 
 
 class DataExtractor:
@@ -60,18 +62,22 @@ class DataExtractor:
 
     JOURNAL_TITLE_ALIASES = {
         "adv funct materials": "Advanced Functional Materials",
+        "adv funct mater": "Advanced Functional Materials",
         "adv. funct. mater.": "Advanced Functional Materials",
         "adv. funct. materials": "Advanced Functional Materials",
         "advanced materials": "Advanced Materials",
+        "adv materials": "Advanced Materials",
         "adv. mater.": "Advanced Materials",
         "advanced optical materials": "Advanced Optical Materials",
         "adv. opt. mater.": "Advanced Optical Materials",
         "adv opt mater": "Advanced Optical Materials",
         "laser & photonics reviews": "Laser & Photonics Reviews",
         "laser photonics reviews": "Laser & Photonics Reviews",
+        "laser photonics review": "Laser & Photonics Reviews",
         "laser photon. rev.": "Laser & Photonics Reviews",
         "small": "Small",
         "nano lett.": "Nano Letters",
+        "nano lett": "Nano Letters",
         "chem. mater.": "Chemistry of Materials",
         "j. am. chem. soc.": "Journal of the American Chemical Society",
         "j am chem soc": "Journal of the American Chemical Society",
@@ -79,6 +85,14 @@ class DataExtractor:
         "nature communications": "Nature Communications",
         "nano res.": "Nano Research",
         "nano research": "Nano Research",
+        "chemical engineering journal": "Chemical Engineering Journal",
+        "chem eng j": "Chemical Engineering Journal",
+        "chem eng j ": "Chemical Engineering Journal",
+        "chem. eng. j.": "Chemical Engineering Journal",
+        "journal of photochemistry photobiology c photochemistry reviews": "Journal of Photochemistry & Photobiology, C: Photochemistry Reviews",
+        "journal of photochemistry and photobiology c photochemistry reviews": "Journal of Photochemistry & Photobiology, C: Photochemistry Reviews",
+        "j photochem photobiol c photochem rev": "Journal of Photochemistry & Photobiology, C: Photochemistry Reviews",
+        "j photochem photobiol c photochemistry reviews": "Journal of Photochemistry & Photobiology, C: Photochemistry Reviews",
     }
 
     JOURNAL_LINE_PATTERNS = [
@@ -123,6 +137,7 @@ class DataExtractor:
 
         # 初始化 LLM 客户端
         self.llm: Optional[BaseLLM] = None
+        self.lite_backfill_llm: Optional[BaseLLM] = None
         self._init_llm_client()
 
     def _init_llm_client(self) -> None:
@@ -134,6 +149,7 @@ class DataExtractor:
         try:
             self.llm = create_llm_client(self.llm_config)
             provider = self.llm_config.get("provider", "unknown")
+            self.lite_backfill_llm = self._init_lite_backfill_client()
 
             if self.llm:
                 try:
@@ -152,6 +168,34 @@ class DataExtractor:
         except Exception as e:
             self.logger.warning(f"[LLM] 客户端初始化失败: {e}")
             self.llm = None
+            self.lite_backfill_llm = None
+
+    def _init_lite_backfill_client(self) -> Optional[BaseLLM]:
+        provider = str(self.llm_config.get("provider", "")).lower()
+        if provider != "longcat":
+            return None
+
+        longcat_config = self.llm_config.get("longcat", {})
+        if not longcat_config.get("enable_lite_backfill", True):
+            return None
+
+        api_key = str(self.llm_config.get("api_key", "")).strip()
+        if not api_key:
+            return None
+
+        lite_config = dict(self.llm_config)
+        lite_longcat_config = dict(longcat_config)
+        lite_longcat_config["model"] = lite_longcat_config.get("backfill_model", "LongCat-Flash-Lite")
+        lite_config["longcat"] = lite_longcat_config
+
+        try:
+            client = create_llm_client(lite_config)
+            if client:
+                self.logger.info(f"[LLM] 轻量补全模型已就绪: {lite_longcat_config['model']}")
+            return client
+        except Exception as e:
+            self.logger.warning(f"[LLM] 轻量补全模型初始化失败: {e}")
+            return None
 
     def extract(
         self,
@@ -220,6 +264,7 @@ class DataExtractor:
             paper_data = self._parse_and_validate(response)
 
             if paper_data:
+                paper_data = self._backfill_paper_info_from_text(paper_data, prepared_text, parse_result)
                 paper_data = self._merge_inferred_devices(paper_data, prepared_text)
                 paper_data = self._sanitize_devices(paper_data)
                 paper_data = self._ensure_bilingual_text_fields(paper_data)
@@ -432,6 +477,7 @@ class DataExtractor:
                 data_source=data_source,
                 optimization=optimization,
             )
+            paper_data = self._backfill_paper_info_from_text(paper_data, text, parse_result)
             paper_data = self._merge_inferred_devices(paper_data, text)
             paper_data = self._sanitize_devices(paper_data)
 
@@ -446,6 +492,119 @@ class DataExtractor:
                 success=False,
                 error_message=f"正则提取失败: {str(e)}",
             )
+
+    def _backfill_paper_info_from_text(
+        self,
+        paper_data: PaperData,
+        text: str,
+        parse_result: Optional[ParseResult],
+    ) -> PaperData:
+        paper_info = paper_data.paper_info
+        raw_journal_title, raw_issn, raw_eissn = self._extract_raw_journal_metadata(text, parse_result)
+
+        if raw_journal_title and not paper_info.raw_journal_title:
+            paper_info.raw_journal_title = raw_journal_title
+        if raw_journal_title and not paper_info.journal_name:
+            paper_info.journal_name = raw_journal_title
+        if raw_issn and not paper_info.raw_issn:
+            paper_info.raw_issn = raw_issn
+        if raw_eissn and not paper_info.raw_eissn:
+            paper_info.raw_eissn = raw_eissn
+        if paper_info.impact_factor in (None, 0):
+            extracted_if = self._extract_impact_factor(text)
+            if extracted_if:
+                paper_info.impact_factor = extracted_if
+        return paper_data
+
+    def lite_backfill_paper_info(
+        self,
+        paper_data: PaperData,
+        text: str,
+        parse_result: Optional[ParseResult],
+    ) -> PaperData:
+        if not self.lite_backfill_llm:
+            return paper_data
+
+        if not self._needs_lite_backfill(paper_data):
+            return paper_data
+
+        try:
+            snippet = self._prepare_lite_backfill_input(text)
+            prompt = format_lite_paper_info_backfill_prompt(
+                paper_text=snippet,
+                source_file=parse_result.source_file if parse_result else None,
+                metadata=parse_result.metadata if parse_result else {},
+            )
+            response = self.lite_backfill_llm.generate_json(prompt, temperature=0.1)
+            self.logger.info(
+                "[LLM] 轻量补全返回: "
+                f"title={bool(response.get('title'))}, "
+                f"authors={bool(response.get('authors'))}, "
+                f"journal_name={bool(response.get('journal_name'))}, "
+                f"raw_journal_title={bool(response.get('raw_journal_title'))}, "
+                f"year={response.get('year')!r}"
+            )
+            self._merge_lite_backfill_result(paper_data, response)
+            return self._backfill_paper_info_from_text(paper_data, text, parse_result)
+        except Exception as e:
+            self.logger.warning(f"[LLM] 轻量补全失败: {e}")
+            return paper_data
+
+    def _needs_lite_backfill(self, paper_data: PaperData) -> bool:
+        paper_info = paper_data.paper_info
+        return not all(
+            [
+                paper_info.title,
+                paper_info.journal_name or paper_info.raw_journal_title,
+                paper_info.year,
+            ]
+        )
+
+    def _prepare_lite_backfill_input(self, text: str) -> str:
+        if not text:
+            return ""
+        max_chars = 6000
+        snippet = text[:max_chars].strip()
+        boundary = max(snippet.rfind("\n\n"), snippet.rfind(". "), snippet.rfind("\n"))
+        if boundary > max_chars * 0.6:
+            return snippet[:boundary].strip()
+        return snippet
+
+    def _merge_lite_backfill_result(self, paper_data: PaperData, response: Dict[str, Any]) -> None:
+        paper_info = paper_data.paper_info
+        title = self._coerce_metadata_value(response.get("title"))
+        authors = self._coerce_metadata_value(response.get("authors"))
+        journal_name = self._normalize_journal_title_candidate(
+            self._coerce_metadata_value(response.get("journal_name"))
+        )
+        raw_journal_title = self._normalize_journal_title_candidate(
+            self._coerce_metadata_value(response.get("raw_journal_title"))
+        )
+        year_value = response.get("year")
+
+        if title and not paper_info.title:
+            paper_info.title = title
+        if authors and not paper_info.authors:
+            paper_info.authors = authors
+        if raw_journal_title and not paper_info.raw_journal_title:
+            paper_info.raw_journal_title = raw_journal_title
+        if journal_name and not paper_info.journal_name:
+            paper_info.journal_name = journal_name
+        if year_value not in (None, "") and not paper_info.year:
+            try:
+                year = int(year_value)
+            except (TypeError, ValueError):
+                year = None
+            if year and 1900 <= year <= 2100:
+                paper_info.year = year
+
+        self.logger.info(
+            "[LLM] 轻量补全合并后: "
+            f"title={bool(paper_info.title)}, "
+            f"authors={bool(paper_info.authors)}, "
+            f"journal={paper_info.journal_name or paper_info.raw_journal_title!r}, "
+            f"year={paper_info.year!r}"
+        )
 
     # ============== 正则提取方法 ==============
 
@@ -488,7 +647,11 @@ class DataExtractor:
         parse_result: Optional[ParseResult],
     ) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """提取期刊原始标题、ISSN 和 eISSN。"""
-        metadata = parse_result.metadata if parse_result else {}
+        metadata = dict(parse_result.metadata) if parse_result else {}
+        source_metadata = self._extract_pdf_metadata_from_source(parse_result)
+        for key, value in source_metadata.items():
+            metadata.setdefault(key, value)
+
         raw_journal_title = self._first_non_empty(
             self._normalize_journal_title_candidate(self._coerce_metadata_value(metadata.get("journal_name"))),
             self._normalize_journal_title_candidate(self._coerce_metadata_value(metadata.get("journal"))),
@@ -496,6 +659,7 @@ class DataExtractor:
             self._normalize_journal_title_candidate(self._coerce_metadata_value(metadata.get("publication_title"))),
             self._normalize_journal_title_candidate(self._coerce_metadata_value(metadata.get("container_title"))),
             self._extract_journal_name_from_subject(metadata),
+            self._extract_journal_name_from_filename(parse_result),
             self._extract_journal_name(text),
         )
 
@@ -514,6 +678,16 @@ class DataExtractor:
 
         text_issn, text_eissn = self._extract_issn_from_text(text)
         return raw_journal_title, raw_issn or text_issn, raw_eissn or text_eissn
+
+    def _extract_pdf_metadata_from_source(self, parse_result: Optional[ParseResult]) -> Dict[str, Any]:
+        if not parse_result or not parse_result.source_file:
+            return {}
+
+        try:
+            with PDFProcessor(parse_result.source_file) as processor:
+                return processor._extract_metadata(processor._open())
+        except Exception:
+            return {}
 
     def _extract_issn_from_text(self, text: str) -> tuple[Optional[str], Optional[str]]:
         """从文章前部文本提取 ISSN/eISSN。"""
@@ -601,27 +775,75 @@ class DataExtractor:
             return None
 
         normalized_subject = re.sub(r"\s+", " ", subject).strip()
-        match = re.match(r"^([A-Za-z&.\- ]+?)\s+(?:19|20)\d{2}(?:[.:; ].*)?$", normalized_subject)
-        if match:
-            candidate = self._normalize_journal_title_candidate(match.group(1))
+        normalized_subject = re.sub(r"\bdoi\s*:\s*10\.\S+$", "", normalized_subject, flags=re.IGNORECASE).strip(" ,.;")
+
+        subject_candidates = [normalized_subject]
+        volume_patterns = [
+            r"^(.+?)(?:,\s*\d+\s*\((?:19|20)\d{2}\).*)$",
+            r"^(.+?)(?:\s+\d+\s*\((?:19|20)\d{2}\).*)$",
+            r"^(.+?)(?:\s+(?:19|20)\d{2}[,.:; ].*)$",
+            r"^(.+?)(?:\s+(?:19|20)\d{2}\.\d+.*)$",
+        ]
+        for pattern in volume_patterns:
+            match = re.match(pattern, normalized_subject, re.IGNORECASE)
+            if match:
+                subject_candidates.insert(0, match.group(1).strip(" ,.;"))
+
+        for candidate_text in subject_candidates:
+            candidate = self._normalize_journal_title_candidate(candidate_text)
             if candidate:
                 return candidate
 
-        return self._normalize_journal_title_candidate(normalized_subject)
+        return None
+
+    def _extract_journal_name_from_filename(
+        self,
+        parse_result: Optional[ParseResult],
+    ) -> Optional[str]:
+        if not parse_result or not parse_result.source_file:
+            return None
+
+        filename = str(parse_result.source_file).split("/")[-1].split("\\")[-1]
+        filename = re.sub(r"\.pdf$", "", filename, flags=re.IGNORECASE)
+
+        candidates = [filename]
+        split_candidates = re.split(r"\s+-\s+", filename)
+        if split_candidates:
+            candidates.append(split_candidates[0])
+            if len(split_candidates) >= 2:
+                candidates.append(" - ".join(split_candidates[:2]))
+
+        for candidate in candidates:
+            normalized = self._normalize_journal_title_candidate(candidate)
+            if normalized:
+                return normalized
+
+        return None
 
     def _normalize_journal_title_candidate(self, value: Optional[str]) -> Optional[str]:
         if value in (None, ""):
             return None
 
         candidate = re.sub(r"\s+", " ", str(value)).strip()
+        candidate = re.sub(r"^(?:cite\s+this|available\s+online)\b[:\s-]*", "", candidate, flags=re.IGNORECASE)
         candidate = re.sub(r"^(?:review|research article|article)\b[:\s-]*", "", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\bdoi\s*:\s*10\.\S+$", "", candidate, flags=re.IGNORECASE).strip(" -|,;.")
         candidate = re.sub(r"\bwww\.[^\s]+", "", candidate, flags=re.IGNORECASE).strip(" -|,;")
+        candidate = re.sub(r"\(\d+\)$", "", candidate).strip()
+        candidate = re.sub(r"\b(19|20)\d{2}\b.*$", "", candidate).strip(" -|,;")
+        candidate = re.sub(r"^[0-9A-Za-z_.-]+-main(?:\s*\(\d+\))?$", "", candidate, flags=re.IGNORECASE).strip()
+        candidate = re.sub(r"\s*\([^)]*\)$", "", candidate).strip(" -|,;.")
 
         lower_candidate = candidate.lower()
         if any(token in lower_candidate for token in ("university of science", "school of materials science")):
             return None
 
         alias = self.JOURNAL_TITLE_ALIASES.get(lower_candidate)
+        if alias:
+            return alias
+
+        simplified_candidate = re.sub(r"[^a-z0-9]+", " ", lower_candidate).strip()
+        alias = self.JOURNAL_TITLE_ALIASES.get(simplified_candidate)
         if alias:
             return alias
 
