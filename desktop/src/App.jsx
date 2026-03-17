@@ -334,6 +334,289 @@ function displayValue(value, fallback = '未设置') {
   return `${value}`;
 }
 
+function maskedStatus(value, configuredLabel = '已填写', emptyLabel = '未填写') {
+  return String(value || '').trim() ? configuredLabel : emptyLabel;
+}
+
+function buildGettingStartedSteps(config, env, runOptions, onboardingCompleted) {
+  const pdfDir = String(runOptions.pdfDir || '').trim();
+  const outputDir = String(runOptions.outputDir || '').trim();
+  const hasApiKey = hasLlmCredentials(config);
+  const mineruEnabled = Boolean(getNestedValue(config, 'mineru.enabled', true));
+  const mineruMode = getNestedValue(config, 'mineru.mode', 'api');
+  const hasMineruToken = String(getNestedValue(config, 'mineru.token', '') || '').trim().length > 0;
+  const networkAvailable = Boolean(getNestedValue(env, 'checks.network.available', false));
+
+  return [
+    {
+      id: 'guide-onboarding',
+      title: onboardingCompleted ? '先确认配置状态' : '先完成首次配置',
+      description: onboardingCompleted
+        ? '如果你不确定当前配置是否可用，先重新打开向导检查一遍最稳妥。'
+        : '第一次使用建议先走一次向导，按顺序把 Longcat、MinerU 和启动方式配好。',
+      status: onboardingCompleted ? '已完成' : '待处理',
+      action: 'reopen_onboarding',
+      actionLabel: onboardingCompleted ? '检查向导' : '开始向导'
+    },
+    {
+      id: 'guide-input',
+      title: '再选择 PDF 和输出目录',
+      description: pdfDir
+        ? `已选论文目录：${pdfDir}${outputDir ? `；输出目录：${outputDir}` : '；建议顺手确认输出目录' }`
+        : '到下方“输入与输出”里先选论文文件夹；不会改动原 PDF 内容。',
+      status: pdfDir ? '已选择' : '待处理',
+      action: 'focus_input',
+      actionLabel: '去选目录'
+    },
+    {
+      id: 'guide-run',
+      title: '最后点开始分析',
+      description: hasApiKey && (!mineruEnabled || mineruMode !== 'api' || hasMineruToken)
+        ? `核心凭据已具备${networkAvailable ? '，可以直接尝试运行。' : '，但当前网络受限，建议先切到正则兜底。'}`
+        : '如果还没填好 API Key 或 MinerU Token，先去设置页补齐，再开始处理。',
+      status: hasApiKey && (!mineruEnabled || mineruMode !== 'api' || hasMineruToken) ? '可启动' : '待补齐',
+      action: hasApiKey && (!mineruEnabled || mineruMode !== 'api' || hasMineruToken) ? 'start_analysis' : 'open_settings',
+      actionLabel: hasApiKey && (!mineruEnabled || mineruMode !== 'api' || hasMineruToken) ? '开始分析' : '去补配置'
+    }
+  ];
+}
+
+function buildSetupChecklist(config, env, onboardingCompleted, runOptions) {
+  const provider = getNestedValue(config, 'llm.provider', 'longcat');
+  const mineruEnabled = Boolean(getNestedValue(config, 'mineru.enabled', true));
+  const mineruMode = getNestedValue(config, 'mineru.mode', 'api');
+  const network = getNestedValue(env, 'checks.network', {});
+  const systemPython = getNestedValue(env, 'checks.systemPython', {});
+  const bundledBackend = getNestedValue(env, 'checks.bundledBackend', {});
+
+  return [
+    {
+      label: '首次向导',
+      value: onboardingCompleted ? '已完成' : '待完成',
+      tone: onboardingCompleted ? 'good' : 'warning',
+      detail: onboardingCompleted ? '桌面端和命令行将共用这份配置。' : '建议先按向导一步步配置。'
+    },
+    {
+      label: 'Longcat API Key',
+      value: maskedStatus(getNestedValue(config, 'llm.api_key', '')),
+      tone: hasLlmCredentials(config) ? 'good' : 'warning',
+      detail: `当前提供商：${formatProviderLabel(provider)}`
+    },
+    {
+      label: 'MinerU Token',
+      value: !mineruEnabled ? '未启用' : mineruMode !== 'api' ? 'CLI 模式无需 Token' : maskedStatus(getNestedValue(config, 'mineru.token', '')),
+      tone: !mineruEnabled || mineruMode !== 'api' || String(getNestedValue(config, 'mineru.token', '') || '').trim() ? 'good' : 'warning',
+      detail: mineruEnabled ? `当前模式：${mineruMode === 'api' ? '云端 API' : '本地 CLI'}` : '当前未启用 MinerU'
+    },
+    {
+      label: '基础联网',
+      value: booleanStatusLabel(Boolean(network.available), '可用', '受限'),
+      tone: Boolean(network.available) ? 'good' : 'warning',
+      detail: displayValue(network.message, '尚未检测')
+    },
+    {
+      label: '内置后端',
+      value: booleanStatusLabel(Boolean(bundledBackend.available), '可用', '未检测到'),
+      tone: Boolean(bundledBackend.available) ? 'good' : 'warning',
+      detail: displayValue(bundledBackend.message, '尚未检测')
+    },
+    {
+      label: '系统 Python',
+      value: Boolean(systemPython.available) && Boolean(systemPython.hasPaperInsight) ? '可直接备用' : Boolean(systemPython.available) ? '已找到但未装 paperinsight' : '不可用',
+      tone: Boolean(systemPython.available) && Boolean(systemPython.hasPaperInsight) ? 'good' : 'muted',
+      detail: displayValue(systemPython.message, '尚未检测')
+    }
+  ];
+}
+
+function buildEnvironmentDetails(env, config) {
+  const checks = getNestedValue(env, 'checks', {});
+  const provider = formatProviderLabel(getNestedValue(config, 'llm.provider', 'longcat'));
+  const llmReady = hasLlmCredentials(config);
+  const mineruEnabled = Boolean(getNestedValue(config, 'mineru.enabled', true));
+  const mineruMode = getNestedValue(config, 'mineru.mode', 'api');
+  const mineruReady = !mineruEnabled || mineruMode !== 'api' || Boolean(String(getNestedValue(config, 'mineru.token', '') || '').trim());
+
+  return [
+    {
+      title: '内置后端检测',
+      status: booleanStatusLabel(Boolean(getNestedValue(checks, 'bundledBackend.available', false)), '可用', '未检测到'),
+      tone: Boolean(getNestedValue(checks, 'bundledBackend.available', false)) ? 'good' : 'warning',
+      detail: displayValue(getNestedValue(checks, 'bundledBackend.message', ''), '未返回检测结果')
+    },
+    {
+      title: '系统 Python 检测',
+      status: Boolean(getNestedValue(checks, 'systemPython.available', false)) && Boolean(getNestedValue(checks, 'systemPython.hasPaperInsight', false))
+        ? '可直接使用'
+        : Boolean(getNestedValue(checks, 'systemPython.available', false))
+          ? '需要补装 paperinsight'
+          : '不可用',
+      tone: Boolean(getNestedValue(checks, 'systemPython.available', false)) && Boolean(getNestedValue(checks, 'systemPython.hasPaperInsight', false)) ? 'good' : 'warning',
+      detail: displayValue(getNestedValue(checks, 'systemPython.message', ''), '未返回检测结果')
+    },
+    {
+      title: '联网检测',
+      status: booleanStatusLabel(Boolean(getNestedValue(checks, 'network.available', false)), '已联网', '网络受限'),
+      tone: Boolean(getNestedValue(checks, 'network.available', false)) ? 'good' : 'warning',
+      detail: displayValue(getNestedValue(checks, 'network.message', ''), '未返回检测结果')
+    },
+    {
+      title: `${provider} 凭据`,
+      status: llmReady ? '已可用' : '待填写',
+      tone: llmReady ? 'good' : 'warning',
+      detail: llmReady ? '已检测到可用于语义提取的凭据。' : '还没有完整 API 凭据，建议先去服务配置页补齐。'
+    },
+    {
+      title: 'MinerU 配置',
+      status: mineruReady ? '已就绪' : '待填写 Token',
+      tone: mineruReady ? 'good' : 'warning',
+      detail: mineruEnabled
+        ? `当前模式：${mineruMode === 'api' ? '云端 API' : '本地 CLI'}`
+        : '当前未启用 MinerU，将使用基础 PDF 解析流程。'
+    }
+  ];
+}
+
+function buildAnalysisGuard(config, env, runOptions, onboardingCompleted) {
+  const issues = [];
+  const mode = runOptions.mode || 'auto';
+  const pdfDir = String(runOptions.pdfDir || '').trim();
+  const llmReady = hasLlmCredentials(config);
+  const mineruEnabled = Boolean(getNestedValue(config, 'mineru.enabled', true));
+  const mineruMode = getNestedValue(config, 'mineru.mode', 'api');
+  const mineruToken = String(getNestedValue(config, 'mineru.token', '') || '').trim();
+  const networkAvailable = Boolean(getNestedValue(env, 'checks.network.available', false));
+
+  if (!onboardingCompleted) {
+    issues.push({
+      id: 'onboarding',
+      level: 'blocked',
+      title: '还没有完成首次配置',
+      description: '请先把首次向导走完，再开始处理论文，这样桌面端和命令行都会共用同一份配置。',
+      action: 'reopen_onboarding',
+      actionLabel: '完成首次配置'
+    });
+  }
+
+  if (!pdfDir) {
+    issues.push({
+      id: 'pdf-dir',
+      level: 'blocked',
+      title: '还没有选择论文目录',
+      description: '请先选择存放 PDF 的文件夹，软件才知道要处理哪一批论文。',
+      action: 'focus_input',
+      actionLabel: '去选论文目录'
+    });
+  }
+
+  if ((mode === 'api' || mode === 'auto') && !llmReady) {
+    issues.push({
+      id: 'llm-creds',
+      level: 'blocked',
+      title: '当前模式需要可用的 LLM 凭据',
+      description: '你现在选的是自动模式或智能 API 模式，但还没有完整 API Key，直接开始容易失败。',
+      action: 'open_settings',
+      actionLabel: '去补 API Key'
+    });
+  }
+
+  if (mode === 'api' && !networkAvailable) {
+    issues.push({
+      id: 'network',
+      level: 'blocked',
+      title: '当前网络受限，不适合直接走智能 API',
+      description: '建议先切到正则兜底，或者等网络恢复后再开始。',
+      action: 'use_regex',
+      actionLabel: '切到正则兜底'
+    });
+  }
+
+  if (mineruEnabled && mineruMode === 'api' && !mineruToken) {
+    issues.push({
+      id: 'mineru-token',
+      level: 'warning',
+      title: 'MinerU 已启用，但还没有填写 Token',
+      description: '这会影响更完整的 PDF 拆解效果。你可以先补 Token，或去设置页把 MinerU 改成本地 CLI / 暂时关闭。',
+      action: 'open_settings',
+      actionLabel: '去看 MinerU 设置'
+    });
+  }
+
+  return {
+    blockingIssues: issues.filter((item) => item.level === 'blocked'),
+    warningIssues: issues.filter((item) => item.level === 'warning')
+  };
+}
+
+function buildRunSummary(config, env, runOptions) {
+  const provider = formatProviderLabel(getNestedValue(config, 'llm.provider', 'longcat'));
+  const mineruEnabled = Boolean(getNestedValue(config, 'mineru.enabled', true));
+  const mineruMode = getNestedValue(config, 'mineru.mode', 'api');
+  return [
+    ['论文目录', displayValue(runOptions.pdfDir, '未选择')],
+    ['输出目录', displayValue(runOptions.outputDir || (runOptions.pdfDir ? `${runOptions.pdfDir}/输出结果` : ''), '未设置')],
+    ['处理模式', modeLabel(runOptions.mode)],
+    ['LLM 服务', `${provider} / ${displayValue(getNestedValue(config, 'llm.model', ''), '未设置模型')}`],
+    ['MinerU', mineruEnabled ? `已启用（${mineruMode === 'api' ? '云端 API' : '本地 CLI'}）` : '未启用'],
+    ['基础联网', booleanStatusLabel(Boolean(getNestedValue(env, 'checks.network.available', false)), '可用', '受限')],
+    ['扫描方式', runOptions.recursive ? '递归扫描子目录' : '只处理当前目录'],
+    ['附加输出', runOptions.exportJson ? 'Excel + JSON' : '仅 Excel']
+  ];
+}
+
+function classifyErrorItem(item) {
+  const text = `${item?.context || ''} ${item?.type || ''} ${item?.message || ''}`.toLowerCase();
+  if (text.includes('token') || text.includes('api key') || text.includes('credential') || text.includes('鉴权') || text.includes('401') || text.includes('403')) {
+    return '凭据或权限问题';
+  }
+  if (text.includes('network') || text.includes('timeout') || text.includes('连接') || text.includes('联网') || text.includes('dns') || text.includes('socket')) {
+    return '网络或连接问题';
+  }
+  if (text.includes('mineru')) {
+    return 'MinerU 解析问题';
+  }
+  if (text.includes('pdf') || text.includes('ocr') || text.includes('page') || text.includes('文件')) {
+    return 'PDF 文件或内容问题';
+  }
+  return '其他问题';
+}
+
+function buildFailureFixSuggestions(groupedErrorItems) {
+  const suggestionMap = {
+    '凭据或权限问题': {
+      title: '先检查 API Key / Token / 权限',
+      description: '这类问题通常不是 PDF 本身坏了，而是服务没有授权成功。',
+      actions: ['去服务配置页补 API Key 或 Token', '确认当前账号确实有对应模型或服务权限', '如果是 Longcat / MinerU 新凭据，保存后再重试']
+    },
+    '网络或连接问题': {
+      title: '先确认联网，再决定是否切兜底',
+      description: '这类问题大多和网络、代理、超时有关。',
+      actions: ['先确认当前电脑能正常联网', '如果只是想先跑通流程，可以切到“正则兜底”模式', '如果你使用了 Base URL / 中转地址，确认地址是否可访问']
+    },
+    'MinerU 解析问题': {
+      title: '优先检查 MinerU 设置',
+      description: '这类问题通常和 MinerU 模式、Token 或解析方式有关。',
+      actions: ['先确认 MinerU Token 是否有效', '可尝试切换 MinerU 模式或临时关闭 MinerU', '如果是特殊 PDF，可尝试更换 txt / ocr / auto 解析方式']
+    },
+    'PDF 文件或内容问题': {
+      title: '先检查 PDF 本身是否适合解析',
+      description: '这类问题通常说明文件本身有损坏、扫描质量差，或者内容结构太特殊。',
+      actions: ['先手动打开 PDF，确认文件能正常阅读', '如果是扫描版 PDF，可尝试 OCR 相关方式', '必要时先用少量样本测试，再批量处理']
+    },
+    '其他问题': {
+      title: '先看日志，再逐项排查',
+      description: '这类问题暂时没有明显模式，建议先从日志和失败文件开始定位。',
+      actions: ['先打开失败项对应文件和日志', '优先确认是否是路径、权限或环境异常', '若重复出现同类错误，再考虑单独做专项修复']
+    }
+  };
+
+  return groupedErrorItems.map(([groupName, items]) => ({
+    groupName,
+    count: items.length,
+    ...(suggestionMap[groupName] || suggestionMap['其他问题'])
+  }));
+}
+
 function OnboardingModal({
   visible,
   step,
@@ -361,6 +644,18 @@ function OnboardingModal({
   const readinessSummary = getNestedValue(env, 'readiness.summary', '环境检测已完成。');
   const networkAvailable = Boolean(getNestedValue(env, 'checks.network.available', false));
   const systemPythonReady = Boolean(getNestedValue(env, 'checks.systemPython.available', false)) && Boolean(getNestedValue(env, 'checks.systemPython.hasPaperInsight', false));
+  const wizardIntro = step === 0
+    ? '别担心，先让我帮您看看这台电脑现在能不能直接用。'
+    : step === 1
+      ? '这一步只需要把 Longcat 的钥匙填进去，不懂的项可以先留空。'
+      : step === 2
+        ? '这一步是给 PDF 拆解助手做准备，大多数人优先用 API 模式就行。'
+        : '最后再一起确认一遍，确认没问题就保存。';
+  const wizardChecklist = [
+    `现在在第 ${step + 1} 步，共 ${wizardSteps.length} 步`,
+    '桌面端和命令行会共用同一份配置',
+    '您填写的 Key 和 Token 只保存在本机'
+  ];
 
   return (
     <div className="wizard-overlay">
@@ -372,6 +667,18 @@ function OnboardingModal({
             <p>我们会按固定顺序带您完成：先检查环境，再配 Longcat，再配 MinerU，最后确认保存。配好后命令行和桌面版都能直接用。</p>
           </div>
         </div>
+
+        <section className="wizard-assistant-banner">
+          <div>
+            <strong>把它当成装机小助手就行</strong>
+            <p>{wizardIntro}</p>
+          </div>
+          <div className="wizard-checklist">
+            {wizardChecklist.map((item) => (
+              <span key={item}>{item}</span>
+            ))}
+          </div>
+        </section>
 
         <div className="wizard-progress">
           {wizardSteps.map((item, index) => (
@@ -518,7 +825,12 @@ function OnboardingModal({
         {error ? <div className="wizard-error">{error}</div> : null}
 
         <div className="wizard-actions">
-          <button className="ghost" onClick={onBack} disabled={step === 0 || saving}>上一步</button>
+          <div className="action-row">
+            <button className="ghost" onClick={onBack} disabled={step === 0 || saving}>上一步</button>
+            {step === 0 ? (
+              <button className="ghost" onClick={onSkip} disabled={saving}>先用推荐配置</button>
+            ) : null}
+          </div>
           {isLastStep ? (
             <button className="primary" onClick={onFinish} disabled={saving}>{saving ? '保存中...' : '完成配置'}</button>
           ) : (
@@ -539,6 +851,7 @@ export default function App() {
   const [loadState, setLoadState] = useState({ loading: true, error: '' });
   const [saveState, setSaveState] = useState({ saving: false, message: '', error: '' });
   const [onboarding, setOnboarding] = useState({ visible: false, step: 0, saving: false, error: '' });
+  const [runConfirmVisible, setRunConfirmVisible] = useState(false);
   const [wizardConfig, setWizardConfig] = useState(null);
   const [resultQuery, setResultQuery] = useState('');
   const [resultScope, setResultScope] = useState('all');
@@ -705,6 +1018,23 @@ export default function App() {
     return { reports, successItems, errorItems };
   }, [job.stats, resultQuery]);
 
+  const groupedErrorItems = useMemo(() => {
+    const groups = new Map();
+    for (const item of filteredResults.errorItems) {
+      const group = classifyErrorItem(item);
+      if (!groups.has(group)) {
+        groups.set(group, []);
+      }
+      groups.get(group).push(item);
+    }
+    return Array.from(groups.entries());
+  }, [filteredResults.errorItems]);
+
+  const failureFixSuggestions = useMemo(
+    () => buildFailureFixSuggestions(groupedErrorItems),
+    [groupedErrorItems]
+  );
+
   async function chooseDirectory(target) {
     const selected = await window.paperInsight.chooseDirectory({
       title: target === 'pdfDir' ? '选择论文目录' : '选择输出目录',
@@ -793,6 +1123,30 @@ export default function App() {
     }
   }
 
+  function handleGuideAction(action) {
+    if (action === 'reopen_onboarding') {
+      reopenOnboarding();
+      return;
+    }
+    if (action === 'open_settings') {
+      setActiveTab('settings');
+      return;
+    }
+    if (action === 'use_regex') {
+      useFallbackMode();
+      return;
+    }
+    if (action === 'focus_input') {
+      setActiveTab('analyze');
+      const inputSection = document.getElementById('input-output-card');
+      inputSection?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    if (action === 'start_analysis') {
+      requestStartAnalysis();
+    }
+  }
+
   async function finishOnboarding(configToPersist) {
     setOnboarding((current) => ({ ...current, saving: true, error: '' }));
     try {
@@ -827,7 +1181,25 @@ export default function App() {
     setOnboarding((current) => ({ ...current, step: Math.max(0, current.step - 1), error: '' }));
   }
 
+  function requestStartAnalysis() {
+    const latestGuard = buildAnalysisGuard(config, env, runOptions, onboardingCompleted);
+    if (latestGuard.blockingIssues.length) {
+      const firstIssue = latestGuard.blockingIssues[0];
+      setJob((current) => ({
+        ...current,
+        status: 'failed',
+        logs: [{ id: `${Date.now()}`, text: firstIssue.description, type: 'failed' }, ...current.logs]
+      }));
+      handleGuideAction(firstIssue.action);
+      return;
+    }
+
+    setRunConfirmVisible(true);
+  }
+
   async function startAnalysis() {
+    setRunConfirmVisible(false);
+
     if (!runOptions.pdfDir) {
       setJob((current) => ({
         ...current,
@@ -916,6 +1288,59 @@ export default function App() {
   const recommendationApplicable = canApplyRecommendedEngine(recommendedEngine);
   const currentMatchesRecommendation = engineMode === recommendedEngine && runOptions.mode === recommendedAnalysisMode;
   const environmentAlerts = buildEnvironmentAlerts(env, config, runOptions);
+  const gettingStartedSteps = buildGettingStartedSteps(config, env, runOptions, onboardingCompleted);
+  const setupChecklist = buildSetupChecklist(config, env, onboardingCompleted, runOptions);
+  const environmentDetails = buildEnvironmentDetails(env, config);
+  const analysisGuard = buildAnalysisGuard(config, env, runOptions, onboardingCompleted);
+  const canStartAnalysis = analysisGuard.blockingIssues.length === 0;
+  const runSummary = buildRunSummary(config, env, runOptions);
+  const overallStatus = analysisGuard.blockingIssues.length
+    ? {
+        tone: 'danger',
+        title: '当前还不能直接开始分析',
+        description: analysisGuard.blockingIssues[0]?.description || '请先处理阻塞项。'
+      }
+    : analysisGuard.warningIssues.length
+      ? {
+          tone: 'warning',
+          title: '可以运行，但建议先补齐部分配置',
+          description: analysisGuard.warningIssues[0]?.description || '当前存在非阻塞提醒。'
+        }
+      : {
+          tone: 'good',
+          title: '环境和配置已基本就绪',
+          description: '可以直接开始分析；如果结果不完整，再回设置页微调。'
+        };
+  const workflowStages = [
+    {
+      id: 'pick',
+      index: 1,
+      title: '选择论文目录',
+      description: runOptions.pdfDir ? displayValue(runOptions.pdfDir) : '先选择要处理的 PDF 文件夹',
+      status: runOptions.pdfDir ? 'done' : 'current'
+    },
+    {
+      id: 'options',
+      index: 2,
+      title: '确认处理模式',
+      description: `${modeLabel(runOptions.mode)} · ${runOptions.recursive ? '递归扫描' : '仅当前目录'}`,
+      status: runOptions.pdfDir ? 'done' : 'pending'
+    },
+    {
+      id: 'run',
+      index: 3,
+      title: '开始分析',
+      description: canStartAnalysis ? '可以直接开始' : '还有配置没补齐',
+      status: job.running ? 'current' : job.status === 'completed' ? 'done' : canStartAnalysis ? 'current' : 'pending'
+    },
+    {
+      id: 'result',
+      index: 4,
+      title: '查看结果',
+      description: job.stats ? `已生成 ${Object.keys(job.stats.reportFiles || {}).length} 份输出` : '完成后可打开输出目录查看 Excel',
+      status: job.stats ? 'done' : 'pending'
+    }
+  ];
 
   return (
     <>
@@ -985,6 +1410,10 @@ export default function App() {
               <span className="eyebrow">Desktop MVP</span>
               <h2>{heroTitle}</h2>
               <p>{heroDescription}</p>
+              <div className={`overall-status-strip ${overallStatus.tone}`}>
+                <strong>{overallStatus.title}</strong>
+                <span>{overallStatus.description}</span>
+              </div>
             </div>
             <div className="hero-pills">
               <span>{engineModeLabel(recommendedEngine)}</span>
@@ -996,6 +1425,110 @@ export default function App() {
 
           {activeTab === 'analyze' ? (
             <section className="content-grid">
+              <article className="panel-card wide quickstart-card">
+                <div className="panel-head split">
+                  <div>
+                    <span className="panel-kicker">Quick Start</span>
+                    <h3>第一次使用就按这 3 步走</h3>
+                  </div>
+                  <div className="action-row">
+                    <button className="ghost" onClick={reopenOnboarding}>重新打开向导</button>
+                    <button className="ghost" onClick={() => setActiveTab('settings')}>查看服务配置</button>
+                  </div>
+                </div>
+                <div className="quickstart-grid">
+                  {gettingStartedSteps.map((item, index) => (
+                    <section key={item.id} className="quickstart-step">
+                      <div className="quickstart-index">步骤 {index + 1}</div>
+                      <strong>{item.title}</strong>
+                      <span className={`inline-status ${item.status === '待处理' ? 'warning' : 'good'}`}>{item.status}</span>
+                      <p>{item.description}</p>
+                      <button className="ghost small" onClick={() => handleGuideAction(item.action)}>{item.actionLabel}</button>
+                    </section>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel-card wide status-overview-card">
+                <div className="panel-head">
+                  <div>
+                    <span className="panel-kicker">Setup Status</span>
+                    <h3>初始化和入口配置一眼看懂</h3>
+                  </div>
+                </div>
+                <div className="setup-checklist-grid">
+                  {setupChecklist.map((item) => (
+                    <div key={item.label} className={`setup-check-item ${item.tone}`}>
+                      <span>{item.label}</span>
+                      <strong>{item.value}</strong>
+                      <small>{item.detail}</small>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel-card wide">
+                <div className="panel-head">
+                  <div>
+                    <span className="panel-kicker">Preflight</span>
+                    <h3>开始分析前，先看这张准备清单</h3>
+                  </div>
+                </div>
+                {analysisGuard.blockingIssues.length ? (
+                  <div className="alert-stack compact">
+                    {analysisGuard.blockingIssues.map((item) => (
+                      <section key={item.id} className="alert-card danger">
+                        <div>
+                          <strong>{item.title}</strong>
+                          <p>{item.description}</p>
+                        </div>
+                        <div className="inline-actions">
+                          <button className="ghost small" onClick={() => handleGuideAction(item.action)}>{item.actionLabel}</button>
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="preflight-ok">
+                    <strong>可以开始分析了</strong>
+                    <p>当前没有必须先处理的阻塞项。你可以继续选目录、调整选项，然后直接点击“开始分析”。</p>
+                  </div>
+                )}
+                {analysisGuard.warningIssues.length ? (
+                  <div className="alert-stack compact">
+                    {analysisGuard.warningIssues.map((item) => (
+                      <section key={`warning-${item.id}`} className="alert-card warning">
+                        <div>
+                          <strong>{item.title}</strong>
+                          <p>{item.description}</p>
+                        </div>
+                        <div className="inline-actions">
+                          <button className="ghost small" onClick={() => handleGuideAction(item.action)}>{item.actionLabel}</button>
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                ) : null}
+              </article>
+
+              <article className="panel-card wide workflow-card">
+                <div className="panel-head">
+                  <div>
+                    <span className="panel-kicker">Workflow</span>
+                    <h3>处理流程</h3>
+                  </div>
+                </div>
+                <div className="workflow-grid">
+                  {workflowStages.map((item) => (
+                    <section key={item.id} className={`workflow-step ${item.status}`}>
+                      <div className="workflow-step-index">0{item.index}</div>
+                      <strong>{item.title}</strong>
+                      <p>{item.description}</p>
+                    </section>
+                  ))}
+                </div>
+              </article>
+
               <article className="panel-card wide">
                 <div className="panel-head split">
                   <div>
@@ -1066,7 +1599,7 @@ export default function App() {
                 </article>
               ) : null}
 
-              <article className="panel-card">
+              <article className="panel-card" id="input-output-card">
                 <div className="panel-head">
                   <div>
                     <span className="panel-kicker">Step 1</span>
@@ -1143,7 +1676,7 @@ export default function App() {
                     {job.running ? (
                       <button className="danger" onClick={cancelAnalysis}>取消任务</button>
                     ) : (
-                      <button className="primary" onClick={startAnalysis}>开始分析</button>
+                      <button className="primary" disabled={!canStartAnalysis} onClick={requestStartAnalysis}>开始分析</button>
                     )}
                   </div>
                 </div>
@@ -1191,6 +1724,12 @@ export default function App() {
                           </button>
                         ))}
                       </div>
+                    </div>
+
+                    <div className="result-quick-actions">
+                      <button className="ghost small" disabled={!filteredResults.reports.length} onClick={() => openPath(filteredResults.reports[0]?.[1])}>一键打开 Excel</button>
+                      <button className="ghost small" disabled={!job.outputDir} onClick={openOutputDir}>一键打开输出目录</button>
+                      <button className="ghost small" disabled={!filteredResults.errorItems.length} onClick={() => openPath(filteredResults.errorItems[0]?.path)}>定位第一条失败项</button>
                     </div>
 
                     <div className="result-grid">
@@ -1241,13 +1780,23 @@ export default function App() {
                           <span>{filteredResults.errorItems.length} / {job.stats.errorItems?.length || 0} 篇</span>
                         </div>
                         {resultScope !== 'success' && filteredResults.errorItems.length ? (
-                          <div className="result-list compact">
-                            {filteredResults.errorItems.map((item) => (
-                              <button key={`${item.file}-${item.path}`} className="result-item danger-soft" onClick={() => openPath(item.path)}>
-                                <span>{item.file || '未知文件'}</span>
-                                <strong>{item.context || item.type || '处理失败'}</strong>
-                                <small>{item.message || '未知错误'}</small>
-                              </button>
+                          <div className="error-group-list">
+                            {groupedErrorItems.map(([groupName, items]) => (
+                              <section key={groupName} className="error-group-card">
+                                <div className="result-head">
+                                  <h4>{groupName}</h4>
+                                  <span>{items.length} 篇</span>
+                                </div>
+                                <div className="result-list compact">
+                                  {items.map((item) => (
+                                    <button key={`${groupName}-${item.file}-${item.path}`} className="result-item danger-soft" onClick={() => openPath(item.path)}>
+                                      <span>{item.file || '未知文件'}</span>
+                                      <strong>{item.context || item.type || '处理失败'}</strong>
+                                      <small>{item.message || '未知错误'}</small>
+                                    </button>
+                                  ))}
+                                </div>
+                              </section>
                             ))}
                           </div>
                         ) : resultScope === 'success' ? (
@@ -1257,6 +1806,29 @@ export default function App() {
                         )}
                       </section>
                     </div>
+
+                    {failureFixSuggestions.length ? (
+                      <section className="failure-fix-panel">
+                        <div className="result-head">
+                          <h4>失败原因对应修复建议</h4>
+                          <span>{failureFixSuggestions.length} 类</span>
+                        </div>
+                        <div className="failure-fix-grid">
+                          {failureFixSuggestions.map((item) => (
+                            <section key={`fix-${item.groupName}`} className="failure-fix-card">
+                              <span>{item.groupName} · {item.count} 篇</span>
+                              <strong>{item.title}</strong>
+                              <p>{item.description}</p>
+                              <div className="failure-fix-actions">
+                                {item.actions.map((action) => (
+                                  <div key={`${item.groupName}-${action}`}>{action}</div>
+                                ))}
+                              </div>
+                            </section>
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
                   </>
                 ) : null}
 
@@ -1449,12 +2021,87 @@ export default function App() {
             </section>
           ) : (
             <section className="content-grid settings-grid">
+              <article className="panel-card wide status-overview-card">
+                <div className="panel-head split">
+                  <div>
+                    <span className="panel-kicker">Setup Map</span>
+                    <h3>入口配置和初始化状态</h3>
+                  </div>
+                  <div className="action-row">
+                    <button className="ghost" onClick={reopenOnboarding}>重新打开向导</button>
+                    <button
+                      className="primary"
+                      disabled={!recommendationApplicable || saveState.saving || currentMatchesRecommendation}
+                      onClick={applyRecommendedSetup}
+                    >
+                      {currentMatchesRecommendation ? '已应用推荐' : '一键对齐推荐'}
+                    </button>
+                  </div>
+                </div>
+                <div className="settings-intro-card">
+                  <strong>如果你不知道先改哪一项，就按这个顺序看：先看环境检测，再看 Longcat，再看 MinerU，最后再改输出习惯。</strong>
+                  <p>下面每张卡都只负责一类配置，不需要一次把所有选项都研究完。</p>
+                </div>
+                <div className="setup-checklist-grid">
+                  {setupChecklist.map((item) => (
+                    <div key={`settings-${item.label}`} className={`setup-check-item ${item.tone}`}>
+                      <span>{item.label}</span>
+                      <strong>{item.value}</strong>
+                      <small>{item.detail}</small>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel-card wide">
+                <div className="panel-head">
+                  <div>
+                    <span className="panel-kicker">Environment</span>
+                    <h3>环境检测明细</h3>
+                  </div>
+                </div>
+                <div className="environment-detail-grid">
+                  {environmentDetails.map((item) => (
+                    <section key={item.title} className={`environment-detail-card ${item.tone}`}>
+                      <span>{item.title}</span>
+                      <strong>{item.status}</strong>
+                      <p>{item.detail}</p>
+                    </section>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel-card wide">
+                <div className="panel-head">
+                  <div>
+                    <span className="panel-kicker">Configuration Guide</span>
+                    <h3>先填这些，再看高级项</h3>
+                  </div>
+                </div>
+                <div className="settings-lane-grid">
+                  <section className="settings-lane basic">
+                    <span>基础必填</span>
+                    <strong>Longcat API Key、模型、MinerU 模式 / Token</strong>
+                    <p>第一次使用，先把这几项填好就够了。这样软件至少能正常分析和出结果。</p>
+                  </section>
+                  <section className="settings-lane advanced">
+                    <span>高级选项</span>
+                    <strong>运行引擎、Base URL、缓存、输出习惯</strong>
+                    <p>这些不是第一次必须改的。只有你知道自己为什么要改，再动它们会更稳。</p>
+                  </section>
+                </div>
+              </article>
+
               <article className="panel-card">
                 <div className="panel-head">
                   <div>
-                    <span className="panel-kicker">LLM</span>
-                    <h3>服务凭据</h3>
+                    <span className="panel-kicker">Basic</span>
+                    <h3>基础必填：AI 服务</h3>
                   </div>
+                </div>
+                <div className="card-tip">
+                  <strong>这一张卡最重要。</strong>
+                  <p>如果没有可用的 API Key，自动模式和智能 API 模式就很容易失败。</p>
                 </div>
                 <div className="toggle-grid single">
                   <label><input type="checkbox" checked={Boolean(getNestedValue(config, 'llm.enabled', true))} onChange={(event) => updateConfig('llm.enabled', event.target.checked)} />启用 LLM 语义提取</label>
@@ -1501,9 +2148,13 @@ export default function App() {
               <article className="panel-card">
                 <div className="panel-head">
                   <div>
-                    <span className="panel-kicker">Engine</span>
-                    <h3>运行引擎</h3>
+                    <span className="panel-kicker">Basic + Advanced</span>
+                    <h3>MinerU 与运行引擎</h3>
                   </div>
+                </div>
+                <div className="card-tip">
+                  <strong>先看 MinerU，再决定要不要改引擎。</strong>
+                  <p>普通用户优先用内置后端 + MinerU API；只有你已经有自己的 Python 环境时，再切系统 Python。</p>
                 </div>
                 <div className="env-summary-card">
                   <span>推荐：{engineModeLabel(recommendedEngine)}</span>
@@ -1623,6 +2274,44 @@ export default function App() {
         saving={onboarding.saving}
         error={onboarding.error}
       />
+
+      {runConfirmVisible ? (
+        <div className="wizard-overlay">
+          <div className="wizard-card run-confirm-card">
+            <div className="wizard-header">
+              <div>
+                <span className="eyebrow">Run Check</span>
+                <h2>开始前，请再确认一遍</h2>
+                <p>下面这份摘要会告诉你：这次会处理哪里、怎么处理、结果会写到哪里。确认没问题再开始。</p>
+              </div>
+            </div>
+            <div className="run-summary-grid">
+              {runSummary.map(([label, value]) => (
+                <section key={label} className="wizard-summary-card">
+                  <span>{label}</span>
+                  <strong>{value}</strong>
+                </section>
+              ))}
+            </div>
+            {analysisGuard.warningIssues.length ? (
+              <div className="alert-stack compact">
+                {analysisGuard.warningIssues.map((item) => (
+                  <section key={`confirm-${item.id}`} className="alert-card warning">
+                    <div>
+                      <strong>{item.title}</strong>
+                      <p>{item.description}</p>
+                    </div>
+                  </section>
+                ))}
+              </div>
+            ) : null}
+            <div className="wizard-actions">
+              <button className="ghost" onClick={() => setRunConfirmVisible(false)}>返回继续检查</button>
+              <button className="primary" onClick={startAnalysis}>确认并开始</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

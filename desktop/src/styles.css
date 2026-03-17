@@ -246,11 +246,204 @@ code {
   color: var(--accent-deep);
 }
 
+.overall-status-strip {
+  display: grid;
+  gap: 4px;
+  margin-top: 18px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+}
+
+.overall-status-strip.good {
+  background: rgba(215, 231, 227, 0.72);
+}
+
+.overall-status-strip.warning {
+  background: rgba(250, 243, 225, 0.92);
+}
+
+.overall-status-strip.danger {
+  background: rgba(255, 236, 233, 0.92);
+}
+
+.overall-status-strip strong {
+  font-size: 1rem;
+}
+
+.overall-status-strip span {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .content-grid {
   margin-top: 24px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 22px;
+}
+
+.quickstart-card,
+.status-overview-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.quickstart-card::before,
+.status-overview-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, rgba(170, 91, 42, 0.85), rgba(47, 127, 116, 0.72));
+}
+
+.quickstart-grid,
+.setup-checklist-grid,
+.environment-detail-grid,
+.workflow-grid,
+.settings-lane-grid,
+.run-summary-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.quickstart-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.setup-checklist-grid,
+.environment-detail-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.workflow-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.settings-lane-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.run-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 18px;
+}
+
+.quickstart-step,
+.setup-check-item,
+.environment-detail-card,
+.settings-intro-card,
+.workflow-step,
+.settings-lane,
+.card-tip {
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.52);
+}
+
+.quickstart-step {
+  display: grid;
+  gap: 10px;
+}
+
+.workflow-step,
+.settings-lane {
+  display: grid;
+  gap: 10px;
+}
+
+.quickstart-index,
+.inline-status,
+.workflow-step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.quickstart-index {
+  background: rgba(170, 91, 42, 0.12);
+  color: var(--accent-deep);
+}
+
+.workflow-step-index {
+  background: rgba(63, 52, 41, 0.08);
+  color: var(--muted);
+}
+
+.inline-status.good,
+.setup-check-item.good,
+.environment-detail-card.good,
+.workflow-step.done,
+.settings-lane.basic {
+  background: rgba(215, 231, 227, 0.62);
+}
+
+.inline-status.warning,
+.setup-check-item.warning,
+.environment-detail-card.warning,
+.workflow-step.current {
+  background: rgba(250, 243, 225, 0.9);
+}
+
+.setup-check-item.muted,
+.environment-detail-card.muted,
+.workflow-step.pending,
+.settings-lane.advanced,
+.card-tip {
+  background: rgba(247, 242, 232, 0.82);
+}
+
+.quickstart-step strong,
+.setup-check-item strong,
+.environment-detail-card strong,
+.settings-intro-card strong,
+.workflow-step strong,
+.settings-lane strong,
+.card-tip strong {
+  display: block;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.quickstart-step p,
+.environment-detail-card p,
+.settings-intro-card p,
+.workflow-step p,
+.settings-lane p,
+.card-tip p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.setup-check-item span,
+.environment-detail-card span,
+.settings-lane span {
+  display: block;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.setup-check-item small {
+  display: block;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.settings-intro-card {
+  margin-bottom: 16px;
+  background: rgba(230, 199, 168, 0.28);
+}
+
+.card-tip {
+  margin-bottom: 18px;
 }
 
 .settings-grid .wide,
@@ -500,6 +693,63 @@ select {
   gap: 10px;
 }
 
+.result-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.failure-fix-panel {
+  margin: 10px 0 18px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.failure-fix-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.failure-fix-card {
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(247, 242, 232, 0.86);
+  border: 1px solid rgba(63, 52, 41, 0.08);
+}
+
+.failure-fix-card span,
+.failure-fix-card p {
+  color: var(--muted);
+}
+
+.failure-fix-card strong {
+  display: block;
+  margin: 8px 0;
+  font-size: 1rem;
+}
+
+.failure-fix-card p {
+  margin: 0 0 10px;
+  line-height: 1.7;
+}
+
+.failure-fix-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.failure-fix-actions div {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  line-height: 1.6;
+}
+
 .scope-chip {
   padding: 12px 14px;
   background: rgba(63, 52, 41, 0.08);
@@ -544,6 +794,18 @@ select {
 .result-list.compact {
   max-height: 280px;
   overflow: auto;
+}
+
+.error-group-list {
+  display: grid;
+  gap: 14px;
+}
+
+.error-group-card {
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 236, 233, 0.45);
+  border: 1px solid rgba(161, 68, 56, 0.12);
 }
 
 .result-item {
@@ -770,6 +1032,29 @@ select {
   margin-top: 18px;
 }
 
+.preflight-ok,
+.wizard-assistant-banner {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(47, 127, 116, 0.18);
+  background: rgba(215, 231, 227, 0.62);
+}
+
+.preflight-ok strong,
+.wizard-assistant-banner strong {
+  display: block;
+  font-size: 1rem;
+}
+
+.preflight-ok p,
+.wizard-assistant-banner p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
 .success-text {
   color: var(--teal);
 }
@@ -793,6 +1078,24 @@ select {
   width: min(1020px, 100%);
   max-height: calc(100vh - 56px);
   overflow: auto;
+}
+
+.wizard-assistant-banner {
+  margin-bottom: 18px;
+}
+
+.wizard-checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.wizard-checklist span {
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  font-size: 0.9rem;
 }
 
 .wizard-progress,
@@ -901,6 +1204,13 @@ select {
   .wizard-form-grid,
   .stat-grid,
   .result-grid,
+  .quickstart-grid,
+  .setup-checklist-grid,
+  .environment-detail-grid,
+  .workflow-grid,
+  .settings-lane-grid,
+  .run-summary-grid,
+  .failure-fix-grid,
   .help-grid,
   .help-notes,
   .release-grid,
