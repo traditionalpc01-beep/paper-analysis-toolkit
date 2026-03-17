@@ -91,6 +91,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "web_search": {
         "enabled": True,
         "timeout": 30,
+        "resolve_journal_metadata": True,
+        "fetch_official_impact_factor": True,
         "correct_existing_impact_factor": True,
     },
     # 缓存配置

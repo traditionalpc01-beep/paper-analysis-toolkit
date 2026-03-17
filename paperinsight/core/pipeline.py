@@ -16,6 +16,7 @@ from datetime import datetime
 from math import ceil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from urllib.parse import quote
 
 from tqdm import tqdm
 
@@ -30,7 +31,8 @@ from paperinsight.utils.hash_utils import calculate_md5
 from paperinsight.utils.file_renamer import FileRenamer
 from paperinsight.utils.logger import ErrorLogger, setup_logger
 from paperinsight.utils.pdf_utils import extract_text_with_fallback
-from paperinsight.web.impact_factor_search import ImpactFactorSearcher
+from paperinsight.web.impact_factor_fetcher import MJLImpactFactorFetcher
+from paperinsight.web.journal_resolver import MJLJournalResolution, MJLJournalResolver
 
 
 class AnalysisPipeline:
@@ -76,9 +78,20 @@ class AnalysisPipeline:
         # 初始化数据提取器
         self.extractor = DataExtractor(config=self.config)
 
-        # 初始化 Web 搜索器
+        # 初始化 Web 检索器
         web_config = self.config.get("web_search", {})
-        self.if_searcher = ImpactFactorSearcher() if web_config.get("enabled", True) else None
+        timeout = int(web_config.get("timeout", 30))
+        web_enabled = bool(web_config.get("enabled", True))
+        self.journal_resolver = (
+            MJLJournalResolver(timeout=timeout)
+            if web_enabled and web_config.get("resolve_journal_metadata", True)
+            else None
+        )
+        self.if_fetcher = (
+            MJLImpactFactorFetcher(timeout=timeout)
+            if web_enabled and web_config.get("fetch_official_impact_factor", True)
+            else None
+        )
 
         # 初始化报告生成器
         self.reporter = ReportGenerator(self.output_dir)
@@ -218,8 +231,9 @@ class AnalysisPipeline:
 
         paper_data = extraction_result.data
 
-        if self.if_searcher:
-            self._supplement_impact_factor(paper_data)
+        journal_resolution = self._resolve_journal_metadata(paper_data)
+        if self.if_fetcher:
+            self._supplement_impact_factor(paper_data, journal_resolution)
 
         if self.enable_cache and use_cache:
             self.cache_manager.save_data_cache(md5, paper_data.model_dump())
@@ -277,34 +291,107 @@ class AnalysisPipeline:
             metadata=metadata,
         )
 
-    def _supplement_impact_factor(self, paper_data: PaperData) -> None:
-        """补全影响因子"""
-        journal_name = paper_data.paper_info.journal_name
+    def _resolve_journal_metadata(self, paper_data: PaperData) -> Optional[MJLJournalResolution]:
+        """补全期刊标准信息。"""
+        if not self.journal_resolver:
+            return None
+
+        paper_info = paper_data.paper_info
+        raw_journal_title = paper_info.raw_journal_title or paper_info.journal_name
+        raw_issn = paper_info.raw_issn
+        raw_eissn = paper_info.raw_eissn
+
+        if not any((raw_journal_title, raw_issn, raw_eissn)):
+            return None
+
+        try:
+            resolution = self.journal_resolver.resolve(
+                journal_title=raw_journal_title,
+                issn=raw_issn,
+                eissn=raw_eissn,
+            )
+        except Exception as e:
+            self.logger.warning(f"[期刊解析] 失败: {e}")
+            return None
+
+        if raw_journal_title and not paper_info.raw_journal_title:
+            paper_info.raw_journal_title = raw_journal_title
+
+        if resolution.match_method:
+            paper_info.match_method = resolution.match_method
+
+        if resolution.candidate:
+            paper_info.matched_journal_title = resolution.matched_journal_title
+            paper_info.matched_issn = resolution.matched_issn
+            paper_info.journal_profile_url = resolution.candidate.search_url
+            paper_info.journal_name = resolution.matched_journal_title or paper_info.journal_name
+        elif resolution.search_value and not paper_info.journal_profile_url:
+            search_value = resolution.search_value
+            if "-" in search_value and len(search_value) == 9:
+                paper_info.journal_profile_url = (
+                    f"{self.journal_resolver.SEARCH_RESULTS_URL}?issn={quote(search_value)}"
+                )
+            else:
+                paper_info.journal_profile_url = (
+                    f"{self.journal_resolver.SEARCH_RESULTS_URL}?search={quote(search_value)}"
+                )
+
+        return resolution
+
+    def _supplement_impact_factor(
+        self,
+        paper_data: PaperData,
+        journal_resolution: Optional[MJLJournalResolution] = None,
+    ) -> None:
+        """补全影响因子。"""
+        paper_info = paper_data.paper_info
+        journal_name = paper_info.journal_name or paper_info.raw_journal_title
         if not journal_name:
             return
 
         try:
-            current_if = paper_data.paper_info.impact_factor
+            current_if = paper_info.impact_factor
             web_config = self.config.get("web_search", {})
             should_correct_existing = bool(web_config.get("correct_existing_impact_factor", True))
+            fetch_official_impact_factor = bool(web_config.get("fetch_official_impact_factor", True))
 
-            if current_if and not should_correct_existing and 0.1 <= current_if <= 200:
+            if current_if and not should_correct_existing and 0.1 <= current_if <= 200 and not fetch_official_impact_factor:
                 return
 
-            matched = self.if_searcher.lookup_impact_factor(journal_name)
-            if matched is None:
+            resolution = journal_resolution or self._resolve_journal_metadata(paper_data)
+            if resolution is None:
                 return
+
+            if resolution.status != "OK" or not resolution.candidate:
+                paper_info.impact_factor_source = "MJL_RESOLVER"
+                paper_info.impact_factor_status = resolution.status
+                return
+
+            if not fetch_official_impact_factor:
+                return
+
+            fetch_result = self.if_fetcher.lookup(resolution.candidate)
+            paper_info.impact_factor_source = fetch_result.source_name
+            paper_info.impact_factor_status = fetch_result.status
+
+            if fetch_result.source_url:
+                paper_info.journal_profile_url = fetch_result.source_url
+
+            if fetch_result.status != "OK" or fetch_result.impact_factor is None:
+                return
+
+            paper_info.impact_factor_year = fetch_result.year
 
             if current_if is None or current_if <= 0:
-                paper_data.paper_info.impact_factor = matched.impact_factor
+                paper_info.impact_factor = fetch_result.impact_factor
                 return
 
             if current_if < 0.1 or current_if > 200:
-                paper_data.paper_info.impact_factor = matched.impact_factor
+                paper_info.impact_factor = fetch_result.impact_factor
                 return
 
-            if should_correct_existing and abs(current_if - matched.impact_factor) >= 0.5:
-                paper_data.paper_info.impact_factor = matched.impact_factor
+            if should_correct_existing and abs(current_if - fetch_result.impact_factor) >= 0.5:
+                paper_info.impact_factor = fetch_result.impact_factor
         except Exception as e:
             self.logger.warning(f"[IF搜索] 失败: {e}")
 

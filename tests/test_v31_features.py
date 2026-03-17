@@ -74,29 +74,139 @@ def test_pipeline_can_correct_existing_impact_factor_when_web_result_differs(tmp
             "cache": {"enabled": False},
             "mineru": {"enabled": False},
             "llm": {"enabled": False},
-            "web_search": {"enabled": True, "correct_existing_impact_factor": True},
+            "web_search": {
+                "enabled": True,
+                "resolve_journal_metadata": True,
+                "fetch_official_impact_factor": True,
+                "correct_existing_impact_factor": True,
+            },
         },
     )
 
-    class DummySearcher:
-        def lookup_impact_factor(self, journal_name, use_cache=True):
-            from paperinsight.web.impact_factor_search import ImpactFactorMatch
+    class DummyResolver:
+        SEARCH_RESULTS_URL = "https://mjl.clarivate.com/search-results"
 
-            return ImpactFactorMatch(
-                journal_name=journal_name,
-                impact_factor=18.9,
-                source_url="https://example.com",
-                source_name="test",
-                year=2023,
-                similarity=0.99,
+        def resolve(self, journal_title=None, issn=None, eissn=None):
+            from paperinsight.web.journal_resolver import MJLJournalCandidate, MJLJournalResolution
+
+            return MJLJournalResolution(
+                status="OK",
+                match_method="exact_title",
+                search_value=journal_title,
+                candidate=MJLJournalCandidate(
+                    publication_seq_no="12345J",
+                    publication_title="NATURE COMMUNICATIONS",
+                    publication_title_iso="Nature Communications",
+                    issn="2041-1723",
+                    eissn="2041-1723",
+                    publisher_name="Nature Portfolio",
+                    search_identifier="search-id-1",
+                    search_url="https://mjl.clarivate.com/search-results?issn=2041-1723",
+                    profile_url="https://mjl.clarivate.com/journal-profile",
+                ),
             )
 
-    pipeline.if_searcher = DummySearcher()
-    paper_data = PaperData(paper_info=PaperInfo(journal_name="Nature Communications", impact_factor=1.0))
+    class DummyFetcher:
+        def lookup(self, candidate):
+            from paperinsight.web.impact_factor_fetcher import ImpactFactorLookupResult
 
-    pipeline._supplement_impact_factor(paper_data)
+            return ImpactFactorLookupResult(
+                status="OK",
+                source_name="MJL_PROFILE_API",
+                source_url="https://mjl.clarivate.com/api/mjl/jprof/restricted/seqno/12345J?searchIdentifier=search-id-1",
+                impact_factor=18.9,
+                year=2023,
+            )
 
+    pipeline.journal_resolver = DummyResolver()
+    pipeline.if_fetcher = DummyFetcher()
+    paper_data = PaperData(
+        paper_info=PaperInfo(
+            journal_name="Nature Communications",
+            raw_journal_title="Nature Communications",
+            impact_factor=1.0,
+        )
+    )
+
+    resolution = pipeline._resolve_journal_metadata(paper_data)
+    pipeline._supplement_impact_factor(paper_data, resolution)
+
+    assert paper_data.paper_info.journal_name == "Nature Communications"
+    assert paper_data.paper_info.matched_journal_title == "Nature Communications"
+    assert paper_data.paper_info.matched_issn == "2041-1723"
+    assert paper_data.paper_info.match_method == "exact_title"
     assert paper_data.paper_info.impact_factor == 18.9
+    assert paper_data.paper_info.impact_factor_year == 2023
+    assert paper_data.paper_info.impact_factor_source == "MJL_PROFILE_API"
+    assert paper_data.paper_info.impact_factor_status == "OK"
+
+
+def test_pipeline_marks_no_access_when_official_if_requires_login(tmp_path):
+    pipeline = AnalysisPipeline(
+        output_dir=tmp_path,
+        config={
+            "cache": {"enabled": False},
+            "mineru": {"enabled": False},
+            "llm": {"enabled": False},
+            "web_search": {
+                "enabled": True,
+                "resolve_journal_metadata": True,
+                "fetch_official_impact_factor": True,
+                "correct_existing_impact_factor": True,
+            },
+        },
+    )
+
+    class DummyResolver:
+        SEARCH_RESULTS_URL = "https://mjl.clarivate.com/search-results"
+
+        def resolve(self, journal_title=None, issn=None, eissn=None):
+            from paperinsight.web.journal_resolver import MJLJournalCandidate, MJLJournalResolution
+
+            return MJLJournalResolution(
+                status="OK",
+                match_method="issn",
+                search_value=issn,
+                candidate=MJLJournalCandidate(
+                    publication_seq_no="70884J",
+                    publication_title="NATURE",
+                    publication_title_iso="Nature",
+                    issn="0028-0836",
+                    eissn="1476-4687",
+                    publisher_name="Nature Portfolio",
+                    search_identifier="search-id-1",
+                    search_url="https://mjl.clarivate.com/search-results?issn=1476-4687",
+                    profile_url="https://mjl.clarivate.com/journal-profile",
+                ),
+            )
+
+    class DummyFetcher:
+        def lookup(self, candidate):
+            from paperinsight.web.impact_factor_fetcher import ImpactFactorLookupResult
+
+            return ImpactFactorLookupResult(
+                status="NO_ACCESS",
+                source_name="MJL_PROFILE_API",
+                source_url="https://mjl.clarivate.com/api/mjl/jprof/restricted/seqno/70884J?searchIdentifier=search-id-1",
+            )
+
+    pipeline.journal_resolver = DummyResolver()
+    pipeline.if_fetcher = DummyFetcher()
+    paper_data = PaperData(
+        paper_info=PaperInfo(
+            journal_name="Nature",
+            raw_journal_title="Nature",
+            raw_eissn="1476-4687",
+        )
+    )
+
+    resolution = pipeline._resolve_journal_metadata(paper_data)
+    pipeline._supplement_impact_factor(paper_data, resolution)
+
+    assert paper_data.paper_info.matched_journal_title == "Nature"
+    assert paper_data.paper_info.impact_factor is None
+    assert paper_data.paper_info.impact_factor_source == "MJL_PROFILE_API"
+    assert paper_data.paper_info.impact_factor_status == "NO_ACCESS"
 
 
 def test_cli_prompts_for_bilingual_choice_each_run(monkeypatch, tmp_path):
