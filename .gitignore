@@ -57,3 +57,6 @@ config/config.yaml
 *.tmp
 *.temp
 ~*
+
+# Local sample data
+示例数据/PDF-project/
