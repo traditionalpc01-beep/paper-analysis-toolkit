@@ -442,6 +442,26 @@ select {
   font-size: 1.45rem;
 }
 
+.env-summary-card {
+  padding: 16px;
+  margin-bottom: 18px;
+  border-radius: 18px;
+  background: rgba(230, 199, 168, 0.28);
+  border: 1px solid rgba(170, 91, 42, 0.14);
+}
+
+.env-summary-card span,
+.env-summary-card small {
+  display: block;
+  color: var(--muted);
+}
+
+.env-summary-card strong {
+  display: block;
+  margin: 8px 0;
+  line-height: 1.6;
+}
+
 .log-panel {
   min-height: 260px;
   max-height: 360px;

@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from paperinsight.desktop_bridge import _build_runtime_config, _build_stats, _collect_pdf_files
+from paperinsight.desktop_bridge import (
+    _build_runtime_config,
+    _build_startup_recommendation,
+    _build_stats,
+    _collect_pdf_files,
+    _has_online_capability,
+)
 from paperinsight.models.schemas import DeviceData, PaperData, PaperInfo
 from paperinsight.utils.config import DEFAULT_CONFIG, normalize_config
 
@@ -75,3 +81,46 @@ def test_build_stats_includes_success_and_error_items(tmp_path: Path):
     assert stats["successItems"][0]["bestEqe"] == "22.5%"
     assert stats["errorItems"][0]["file"] == "bad.pdf"
     assert stats["reportFiles"]["excel"].endswith("report.xlsx")
+
+
+def test_has_online_capability_requires_real_credentials():
+    config = normalize_config(DEFAULT_CONFIG)
+
+    assert _has_online_capability(config) is False
+
+    config["llm"]["api_key"] = "sk-test"
+    assert _has_online_capability(config) is True
+
+
+def test_startup_recommendation_prefers_bundled_and_regex_without_credentials():
+    config = normalize_config(DEFAULT_CONFIG)
+    recommendation, readiness = _build_startup_recommendation(
+        config,
+        {
+            "bundledBackend": {"available": True},
+            "network": {"available": True},
+            "systemPython": {"available": True, "hasPaperInsight": True},
+        },
+    )
+
+    assert recommendation["engineMode"] == "bundled"
+    assert recommendation["analysisMode"] == "regex"
+    assert recommendation["fallbackTool"]["id"] == "regex"
+    assert readiness["status"] == "limited"
+
+
+def test_startup_recommendation_falls_back_to_system_python_when_needed():
+    config = normalize_config(DEFAULT_CONFIG)
+    config["llm"]["api_key"] = "sk-test"
+    recommendation, readiness = _build_startup_recommendation(
+        config,
+        {
+            "bundledBackend": {"available": False},
+            "network": {"available": True},
+            "systemPython": {"available": True, "hasPaperInsight": True},
+        },
+    )
+
+    assert recommendation["engineMode"] == "system_python"
+    assert recommendation["analysisMode"] == "api"
+    assert readiness["status"] == "ready"

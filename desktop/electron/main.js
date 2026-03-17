@@ -118,6 +118,69 @@ function collectBackendResponse(command, payload, engine = {}) {
   });
 }
 
+async function collectEnvironmentInfo(config) {
+  try {
+    const response = await collectBackendResponse('env-info', {
+      config,
+      runtime: {
+        bundledAvailable: fs.existsSync(bundledBackendPath()),
+        bundledPath: bundledBackendPath(),
+        isPackaged: app.isPackaged,
+        platform: process.platform
+      }
+    });
+    return response.env;
+  } catch (error) {
+    return {
+      pythonExecutable: '',
+      pythonVersion: '',
+      platform: process.platform,
+      version: '',
+      engineMode: config?.desktop?.engine?.mode || 'bundled',
+      checks: {
+        bundledBackend: {
+          available: fs.existsSync(bundledBackendPath()),
+          current: false,
+          path: bundledBackendPath(),
+          message: '环境检测未完整返回，请检查后端。'
+        },
+        network: {
+          available: false,
+          target: '',
+          latencyMs: null,
+          message: error.message || '环境检测失败'
+        },
+        systemPython: {
+          available: false,
+          command: config?.desktop?.engine?.python_path || '',
+          executable: '',
+          version: '',
+          hasPaperInsight: false,
+          message: error.message || '环境检测失败'
+        }
+      },
+      recommendation: {
+        engineMode: 'bundled',
+        engineLabel: '内置后端',
+        engineReason: '环境检测失败时优先保留内置后端。',
+        analysisMode: 'regex',
+        analysisLabel: '正则兜底',
+        analysisReason: '环境检测失败时建议先使用正则兜底。',
+        fallbackTool: {
+          id: 'regex',
+          label: '正则兜底',
+          reason: '待环境检测恢复后再切换智能模式。'
+        }
+      },
+      readiness: {
+        status: 'limited',
+        summary: '环境检测失败，建议先用内置后端和正则模式。'
+      },
+      diagnosticsError: error.message || '环境检测失败'
+    };
+  }
+}
+
 function emitAnalysisEvent(payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('analysis:event', payload);
@@ -163,20 +226,22 @@ ipcMain.handle('dialog:choose-directory', async (_event, options = {}) => {
 
 ipcMain.handle('config:get', async () => {
   const response = await collectBackendResponse('config-get');
-  const envInfo = await collectBackendResponse('env-info', null, response.config?.desktop?.engine || {});
+  const envInfo = await collectEnvironmentInfo(response.config);
   return {
     config: response.config,
     meta: response.meta,
-    env: envInfo.env,
+    env: envInfo,
     launch: response._launch
   };
 });
 
 ipcMain.handle('config:save', async (_event, payload) => {
-  const response = await collectBackendResponse('config-save', payload, payload?.config?.desktop?.engine || {});
+  const response = await collectBackendResponse('config-save', payload);
+  const envInfo = await collectEnvironmentInfo(response.config);
   return {
     config: response.config,
     meta: response.meta,
+    env: envInfo,
     launch: response._launch
   };
 });

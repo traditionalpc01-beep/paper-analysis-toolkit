@@ -80,6 +80,28 @@ function modeLabel(mode) {
   return mapping[mode] || mode;
 }
 
+function engineModeLabel(mode) {
+  const mapping = {
+    bundled: '内置后端',
+    system_python: '系统 Python',
+    manual_check: '需手动检查'
+  };
+  return mapping[mode] || mode;
+}
+
+function readinessLabel(status) {
+  const mapping = {
+    ready: '环境就绪',
+    limited: '可启动，建议兜底',
+    blocked: '需修复环境'
+  };
+  return mapping[status] || status;
+}
+
+function booleanStatusLabel(value, positive = '可用', negative = '不可用') {
+  return value ? positive : negative;
+}
+
 function hasConfiguredCredentials(config) {
   const provider = getNestedValue(config, 'llm.provider', 'deepseek');
   const llmEnabled = Boolean(getNestedValue(config, 'llm.enabled', true));
@@ -391,6 +413,7 @@ export default function App() {
           ...current,
           pdfDir: getNestedValue(response.config, 'desktop.ui.last_pdf_dir', ''),
           outputDir: getNestedValue(response.config, 'desktop.ui.last_output_dir', ''),
+          mode: getNestedValue(response.env, 'recommendation.analysisMode', current.mode),
           exportJson: getNestedValue(response.config, 'output.format', []).includes('json'),
           renamePdfs: Boolean(getNestedValue(response.config, 'output.rename_pdfs', false)),
           bilingual: Boolean(getNestedValue(response.config, 'output.bilingual_text', false))
@@ -560,6 +583,9 @@ export default function App() {
     const response = await window.paperInsight.saveConfig(finalConfig);
     setConfig(response.config);
     setWizardConfig(cloneConfig(response.config));
+    if (response.env) {
+      setEnv(response.env);
+    }
     setSaveState({ saving: false, message: successMessage, error: '' });
     return response.config;
   }
@@ -687,6 +713,12 @@ export default function App() {
   const provider = getNestedValue(config, 'llm.provider', 'deepseek');
   const engineMode = getNestedValue(config, 'desktop.engine.mode', 'bundled');
   const onboardingCompleted = Boolean(getNestedValue(config, 'desktop.ui.onboarding_completed', false));
+  const recommendedEngine = getNestedValue(env, 'recommendation.engineMode', engineMode);
+  const recommendedAnalysisMode = getNestedValue(env, 'recommendation.analysisMode', 'regex');
+  const networkAvailable = Boolean(getNestedValue(env, 'checks.network.available', false));
+  const systemPythonReady = Boolean(getNestedValue(env, 'checks.systemPython.available', false)) && Boolean(getNestedValue(env, 'checks.systemPython.hasPaperInsight', false));
+  const readinessStatus = getNestedValue(env, 'readiness.status', 'limited');
+  const lastKnownOutputDir = job.outputDir || getNestedValue(config, 'desktop.ui.last_output_dir', '');
 
   return (
     <>
@@ -700,14 +732,26 @@ export default function App() {
 
           <div className="status-stack">
             <div className="status-card warm">
-              <span>引擎模式</span>
-              <strong>{engineMode === 'bundled' ? '内置后端' : '系统 Python'}</strong>
+              <span>当前引擎</span>
+              <strong>{engineModeLabel(engineMode)}</strong>
             </div>
             <div className="status-card">
-              <span>LLM 提供商</span>
-              <strong>{formatProviderLabel(provider)}</strong>
+              <span>推荐启动</span>
+              <strong>{engineModeLabel(recommendedEngine)}</strong>
             </div>
             <div className="status-card cool">
+              <span>环境校验</span>
+              <strong>{readinessLabel(readinessStatus)}</strong>
+            </div>
+            <div className="status-card sand">
+              <span>基础联网</span>
+              <strong>{booleanStatusLabel(networkAvailable, '可用', '受限')}</strong>
+            </div>
+            <div className="status-card sand">
+              <span>Python 兜底</span>
+              <strong>{booleanStatusLabel(systemPythonReady, '可用', '待补齐')}</strong>
+            </div>
+            <div className="status-card">
               <span>当前版本</span>
               <strong>{meta?.version || env?.version || '未知'}</strong>
             </div>
@@ -746,6 +790,7 @@ export default function App() {
               <p>{heroDescription}</p>
             </div>
             <div className="hero-pills">
+              <span>{engineModeLabel(recommendedEngine)}</span>
               <span>{modeLabel(runOptions.mode)}</span>
               <span>{runOptions.recursive ? '递归扫描' : '仅当前目录'}</span>
               <span>{runOptions.exportJson ? 'Excel + JSON' : '仅 Excel'}</span>
@@ -969,6 +1014,8 @@ export default function App() {
                   <div><span>平台</span><strong>{displayValue(env?.platform)}</strong></div>
                   <div><span>Python</span><strong>{displayValue(env?.pythonExecutable)}</strong></div>
                   <div><span>引擎模式</span><strong>{engineMode === 'bundled' ? '内置后端' : '系统 Python'}</strong></div>
+                  <div><span>基础联网</span><strong>{booleanStatusLabel(networkAvailable, '可用', '受限')}</strong></div>
+                  <div><span>环境状态</span><strong>{readinessLabel(readinessStatus)}</strong></div>
                 </div>
               </article>
 
@@ -1007,6 +1054,24 @@ export default function App() {
                   <button className="ghost" onClick={reopenOnboarding}>重新打开首次向导</button>
                 </div>
                 <div className="help-grid">
+                  <section className="help-card full">
+                    <h4>启动建议</h4>
+                    <div className="help-notes">
+                      <div>
+                        <strong>推荐启动方式</strong>
+                        <p>{getNestedValue(env, 'recommendation.engineLabel', engineModeLabel(recommendedEngine))}：{getNestedValue(env, 'recommendation.engineReason', '未返回推荐原因。')}</p>
+                      </div>
+                      <div>
+                        <strong>推荐分析模式</strong>
+                        <p>{getNestedValue(env, 'recommendation.analysisLabel', modeLabel(recommendedAnalysisMode))}：{getNestedValue(env, 'recommendation.analysisReason', '未返回推荐原因。')}</p>
+                      </div>
+                      <div>
+                        <strong>兜底工具</strong>
+                        <p>{getNestedValue(env, 'recommendation.fallbackTool.label', '正则兜底')}：{getNestedValue(env, 'recommendation.fallbackTool.reason', '未返回兜底说明。')}</p>
+                      </div>
+                    </div>
+                  </section>
+
                   <section className="help-card">
                     <h4>常见操作</h4>
                     <div className="result-list">
@@ -1018,9 +1083,9 @@ export default function App() {
                         <span>修改配置</span>
                         <strong>打开服务配置页</strong>
                       </button>
-                      <button className="result-item" disabled={!job.outputDir} onClick={() => openOutputDir()}>
+                      <button className="result-item" disabled={!lastKnownOutputDir} onClick={() => openPath(lastKnownOutputDir)}>
                         <span>查看结果</span>
-                        <strong>打开最近输出目录</strong>
+                        <strong>{lastKnownOutputDir || '打开最近输出目录'}</strong>
                       </button>
                     </div>
                   </section>
@@ -1111,6 +1176,11 @@ export default function App() {
                     <span className="panel-kicker">Engine</span>
                     <h3>运行引擎</h3>
                   </div>
+                </div>
+                <div className="env-summary-card">
+                  <span>推荐：{engineModeLabel(recommendedEngine)}</span>
+                  <strong>{getNestedValue(env, 'recommendation.engineReason', '未返回推荐原因。')}</strong>
+                  <small>基础联网：{booleanStatusLabel(networkAvailable, '可用', '受限')} · Python 兜底：{booleanStatusLabel(systemPythonReady, '可用', '待补齐')} · 推荐分析模式：{modeLabel(recommendedAnalysisMode)}</small>
                 </div>
                 <div className="toggle-grid single">
                   <label><input type="radio" name="engine-mode" checked={engineMode === 'bundled'} onChange={() => updateConfig('desktop.engine.mode', 'bundled')} />内置后端（推荐普通用户）</label>
