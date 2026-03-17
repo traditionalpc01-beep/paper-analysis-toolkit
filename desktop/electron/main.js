@@ -93,7 +93,7 @@ function collectBackendResponse(command, payload, engine = {}) {
     });
 
     child.on('error', (error) => {
-      reject(new Error(`无法启动后端: ${error.message}`));
+      reject(new Error(`无法启动后端：${error.message}`));
     });
 
     child.on('close', (code) => {
@@ -112,7 +112,7 @@ function collectBackendResponse(command, payload, engine = {}) {
         const data = line ? JSON.parse(line) : {};
         resolve({ ...data, _launch: launch, _stderr: stderr.trim() });
       } catch (error) {
-        reject(new Error(`解析后端响应失败: ${error.message}`));
+        reject(new Error(`解析后端响应失败：${error.message}`));
       }
     });
   });
@@ -274,7 +274,7 @@ ipcMain.handle('analysis:start', async (_event, payload) => {
             resolve({ ok: true, launch });
           }
         } catch (error) {
-          emitAnalysisEvent({ type: 'log', level: 'error', message: `解析消息失败: ${error.message}` });
+          emitAnalysisEvent({ type: 'log', level: 'error', message: `解析消息失败：${error.message}` });
         }
       }
     });
@@ -292,7 +292,7 @@ ipcMain.handle('analysis:start', async (_event, payload) => {
 
     child.on('error', (error) => {
       activeAnalysisProcess = null;
-      reject(new Error(`无法启动分析后端: ${error.message}`));
+      reject(new Error(`无法启动分析后端：${error.message}`));
     });
 
     child.on('close', (code) => {

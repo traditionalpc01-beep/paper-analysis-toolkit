@@ -73,13 +73,7 @@ def _has_online_capability(config: dict[str, Any]) -> bool:
     has_paddlex = bool(
         paddlex_config.get("enabled", False) and str(paddlex_config.get("token", "")).strip()
     )
-    return any(
-        [
-            has_mineru_api,
-            has_paddlex,
-            has_llm_credentials,
-        ]
-    )
+    return any([has_mineru_api, has_paddlex, has_llm_credentials])
 
 
 def _preferred_python_command(config: dict[str, Any]) -> str:
@@ -446,7 +440,7 @@ def command_analyze() -> int:
         _emit({"type": "failed", "message": "请选择包含 PDF 的目录。"})
         return 1
     if not pdf_dir.exists() or not pdf_dir.is_dir():
-        _emit({"type": "failed", "message": f"目录不存在: {pdf_dir}"})
+        _emit({"type": "failed", "message": f"目录不存在：{pdf_dir}"})
         return 1
 
     output_dir = Path(request.get("outputDir") or (pdf_dir / "输出结果"))
