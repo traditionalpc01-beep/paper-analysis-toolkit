@@ -8,7 +8,6 @@ from paperinsight.core.extractor import DataExtractor
 from paperinsight.core.pipeline import AnalysisPipeline
 from paperinsight.models.schemas import PaperData, PaperInfo
 from paperinsight.parser.base import ParseResult
-from paperinsight.web.impact_factor_search import ImpactFactorSearcher
 
 
 runner = CliRunner()
@@ -53,18 +52,65 @@ Figure 1 The device shows stable emission.
     assert "prior work with EQE 10%." not in extraction_text
 
 
-def test_impact_factor_searcher_parses_latest_available_history_value():
-    html = """
-    <title>Nature Communications - SCI Journal</title>
-    <div style=width:60%>2024 Impact Factor</div><div style=display:inline-flex;width:40%><span>#N/A</span></div>
-    <div style=width:60%>2023 Impact Factor</div><div style=display:inline-flex;width:40%><span>16.6</span></div>
-    <div style=width:60%>2022 Impact Factor</div><div style=display:inline-flex;width:40%><span>15.7</span></div>
+def test_extractor_prefers_subject_journal_hint_over_science_keyword():
+    extractor = DataExtractor(config={"llm": {"enabled": False}})
+    parse_result = ParseResult(
+        success=True,
+        markdown="",
+        metadata={"subject": "Advanced Materials 2024.36:2404480"},
+    )
+
+    raw_journal_title, raw_issn, raw_eissn = extractor._extract_raw_journal_metadata(
+        "University of Science and Technology of China",
+        parse_result,
+    )
+
+    assert raw_journal_title == "Advanced Materials"
+    assert raw_issn is None
+    assert raw_eissn is None
+
+
+def test_extractor_uses_domain_hint_and_avoids_university_of_science_false_match():
+    extractor = DataExtractor(config={"llm": {"enabled": False}})
+    text = """
+    Small www.small-journal.com RESEARCH ARTICLE
+    Overcoming Exciton Quenching at the ZnMgO/InP Quantum Dot Interface for Stable LEDs
+    Department of Applied Chemistry, University of Science and Technology of China
     """
 
-    searcher = ImpactFactorSearcher()
-    parsed = searcher._parse_scijournal_impact_factor(html)
+    assert extractor._extract_journal_name(text) == "Small"
 
-    assert parsed == (2023, 16.6)
+
+def test_extractor_maps_subject_abbreviations_without_falling_back_to_small_keyword():
+    extractor = DataExtractor(config={"llm": {"enabled": False}})
+    parse_result = ParseResult(
+        success=True,
+        markdown="",
+        metadata={"subject": "Chem. Mater. 2023.35:822-836"},
+    )
+
+    raw_journal_title, _, _ = extractor._extract_raw_journal_metadata(
+        "InP quantum dots have a small bandgap and high covalency.",
+        parse_result,
+    )
+
+    assert raw_journal_title == "Chemistry of Materials"
+
+
+def test_extractor_maps_jacs_subject_abbreviation():
+    extractor = DataExtractor(config={"llm": {"enabled": False}})
+    parse_result = ParseResult(
+        success=True,
+        markdown="",
+        metadata={"subject": "J. Am. Chem. Soc. 2026.148:3501-3512"},
+    )
+
+    raw_journal_title, _, _ = extractor._extract_raw_journal_metadata(
+        "Colloidal quantum dots were studied in solution.",
+        parse_result,
+    )
+
+    assert raw_journal_title == "Journal of the American Chemical Society"
 
 
 def test_pipeline_can_correct_existing_impact_factor_when_web_result_differs(tmp_path):
@@ -205,6 +251,72 @@ def test_pipeline_marks_no_access_when_official_if_requires_login(tmp_path):
 
     assert paper_data.paper_info.matched_journal_title == "Nature"
     assert paper_data.paper_info.impact_factor is None
+    assert paper_data.paper_info.impact_factor_source == "MJL_PROFILE_API"
+    assert paper_data.paper_info.impact_factor_status == "NO_ACCESS"
+
+
+def test_pipeline_can_fetch_if_status_with_issn_only_metadata(tmp_path):
+    pipeline = AnalysisPipeline(
+        output_dir=tmp_path,
+        config={
+            "cache": {"enabled": False},
+            "mineru": {"enabled": False},
+            "llm": {"enabled": False},
+            "web_search": {
+                "enabled": True,
+                "resolve_journal_metadata": True,
+                "fetch_official_impact_factor": True,
+                "correct_existing_impact_factor": True,
+            },
+        },
+    )
+
+    class DummyResolver:
+        SEARCH_RESULTS_URL = "https://mjl.clarivate.com/search-results"
+
+        def resolve(self, journal_title=None, issn=None, eissn=None):
+            from paperinsight.web.journal_resolver import MJLJournalCandidate, MJLJournalResolution
+
+            return MJLJournalResolution(
+                status="OK",
+                match_method="issn",
+                search_value=issn,
+                candidate=MJLJournalCandidate(
+                    publication_seq_no="C6855J",
+                    publication_title="MATERIALS TODAY",
+                    publication_title_iso="Mater. Today",
+                    issn="1369-7021",
+                    eissn="1873-4103",
+                    publisher_name="Elsevier",
+                    search_identifier="search-id-1",
+                    search_url="https://mjl.clarivate.com/search-results?issn=1369-7021",
+                    profile_url="https://mjl.clarivate.com/journal-profile",
+                ),
+            )
+
+    class DummyFetcher:
+        def lookup(self, candidate):
+            from paperinsight.web.impact_factor_fetcher import ImpactFactorLookupResult
+
+            return ImpactFactorLookupResult(
+                status="NO_ACCESS",
+                source_name="MJL_PROFILE_API",
+                source_url="https://mjl.clarivate.com/api/mjl/jprof/restricted/seqno/C6855J?searchIdentifier=search-id-1",
+            )
+
+    pipeline.journal_resolver = DummyResolver()
+    pipeline.if_fetcher = DummyFetcher()
+    paper_data = PaperData(
+        paper_info=PaperInfo(
+            raw_issn="1369-7021",
+        )
+    )
+
+    resolution = pipeline._resolve_journal_metadata(paper_data)
+    pipeline._supplement_impact_factor(paper_data, resolution)
+
+    assert paper_data.paper_info.journal_name == "Mater. Today"
+    assert paper_data.paper_info.match_method == "issn"
     assert paper_data.paper_info.impact_factor_source == "MJL_PROFILE_API"
     assert paper_data.paper_info.impact_factor_status == "NO_ACCESS"
 

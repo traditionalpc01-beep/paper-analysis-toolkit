@@ -45,6 +45,59 @@ class DataExtractor:
     - Regex 模式：正则表达式提取（兜底）
     """
 
+    JOURNAL_DOMAIN_HINTS = {
+        "www.afm-journal.de": "Advanced Functional Materials",
+        "afm-journal.de": "Advanced Functional Materials",
+        "www.advmat.de": "Advanced Materials",
+        "advmat.de": "Advanced Materials",
+        "www.advopticalmat.de": "Advanced Optical Materials",
+        "advopticalmat.de": "Advanced Optical Materials",
+        "www.small-journal.com": "Small",
+        "small-journal.com": "Small",
+        "www.lpr-journal.org": "Laser & Photonics Reviews",
+        "lpr-journal.org": "Laser & Photonics Reviews",
+    }
+
+    JOURNAL_TITLE_ALIASES = {
+        "adv funct materials": "Advanced Functional Materials",
+        "adv. funct. mater.": "Advanced Functional Materials",
+        "adv. funct. materials": "Advanced Functional Materials",
+        "advanced materials": "Advanced Materials",
+        "adv. mater.": "Advanced Materials",
+        "advanced optical materials": "Advanced Optical Materials",
+        "adv. opt. mater.": "Advanced Optical Materials",
+        "adv opt mater": "Advanced Optical Materials",
+        "laser & photonics reviews": "Laser & Photonics Reviews",
+        "laser photonics reviews": "Laser & Photonics Reviews",
+        "laser photon. rev.": "Laser & Photonics Reviews",
+        "small": "Small",
+        "nano lett.": "Nano Letters",
+        "chem. mater.": "Chemistry of Materials",
+        "j. am. chem. soc.": "Journal of the American Chemical Society",
+        "j am chem soc": "Journal of the American Chemical Society",
+        "nat. commun.": "Nature Communications",
+        "nature communications": "Nature Communications",
+        "nano res.": "Nano Research",
+        "nano research": "Nano Research",
+    }
+
+    JOURNAL_LINE_PATTERNS = [
+        r"\bNature\s+(?:Communications|Photonics|Materials|Nanotechnology|Energy)\b",
+        r"\bAdvanced\s+(?:Materials|Functional\s+Materials|Optical\s+Materials|Energy\s+Materials)\b",
+        r"\bAdvanced Functional Materials\b",
+        r"\bAdvanced Materials\b",
+        r"\bAdvanced Optical Materials\b",
+        r"\bLaser\s*(?:&|and)?\s*Photonics\s+Reviews\b",
+        r"\bACS\s+(?:Nano|Applied\s+Materials|Energy\s+Letters|Photonics)\b",
+        r"\bNano\s+(?:Letters|Today|Research|Energy)\b",
+        r"\bJournal\s+of\s+the\s+American\s+Chemical\s+Society\b",
+        r"\bScience\s+Advances\b",
+        r"\bCell(?:\s+Reports)?\b",
+        r"\bAngewandte\s+Chemie\b",
+        r"\bChemical\s+Science\b",
+        r"\bPhysical\s+Review\s+(?:Letters|Applied)\b",
+    ]
+
     def __init__(
         self,
         config: Optional[Dict[str, Any]] = None,
@@ -437,11 +490,12 @@ class DataExtractor:
         """提取期刊原始标题、ISSN 和 eISSN。"""
         metadata = parse_result.metadata if parse_result else {}
         raw_journal_title = self._first_non_empty(
-            self._coerce_metadata_value(metadata.get("journal_name")),
-            self._coerce_metadata_value(metadata.get("journal")),
-            self._coerce_metadata_value(metadata.get("publication_name")),
-            self._coerce_metadata_value(metadata.get("publication_title")),
-            self._coerce_metadata_value(metadata.get("container_title")),
+            self._normalize_journal_title_candidate(self._coerce_metadata_value(metadata.get("journal_name"))),
+            self._normalize_journal_title_candidate(self._coerce_metadata_value(metadata.get("journal"))),
+            self._normalize_journal_title_candidate(self._coerce_metadata_value(metadata.get("publication_name"))),
+            self._normalize_journal_title_candidate(self._coerce_metadata_value(metadata.get("publication_title"))),
+            self._normalize_journal_title_candidate(self._coerce_metadata_value(metadata.get("container_title"))),
+            self._extract_journal_name_from_subject(metadata),
             self._extract_journal_name(text),
         )
 
@@ -514,23 +568,67 @@ class DataExtractor:
 
     def _extract_journal_name(self, text: str) -> Optional[str]:
         """提取期刊名称"""
-        journal_patterns = [
-            r'Nature\s+(Communications|Photonics|Materials|Nanotechnology|Energy)',
-            r'Advanced\s+(Materials|Functional\s+Materials|Optical\s+Materials|Energy\s+Materials)',
-            r'ACS\s+(Nano|Applied\s+Materials|Energy\s+Letters|Photonics)',
-            r'Nano\s+(Letters|Today|Research|Energy)',
-            r'Journal\s+of\s+the\s+American\s+Chemical\s+Society',
-            r'Science\s+(Advances)?',
-            r'Cell\s+(Reports)?',
-            r'Angewandte\s+Chemie',
-            r'Chemical\s+Science',
-            r'Physical\s+Review\s+(Letters|Applied)',
-        ]
+        head_text = text[:5000]
+        head_lower = head_text.lower()
 
-        for pattern in journal_patterns:
-            match = re.search(pattern, text[:5000], re.IGNORECASE)
-            if match:
-                return match.group(0)
+        for domain, journal_name in self.JOURNAL_DOMAIN_HINTS.items():
+            if domain in head_lower:
+                return journal_name
+
+        candidate_lines = []
+        for line in head_text.splitlines():
+            cleaned = re.sub(r"\s+", " ", line).strip()
+            if cleaned:
+                candidate_lines.append(cleaned)
+
+        for line in candidate_lines[:40]:
+            normalized_line = self._normalize_journal_title_candidate(line)
+            if normalized_line:
+                return normalized_line
+
+            for pattern in self.JOURNAL_LINE_PATTERNS:
+                match = re.search(pattern, line, re.IGNORECASE)
+                if match:
+                    normalized_match = self._normalize_journal_title_candidate(match.group(0))
+                    if normalized_match:
+                        return normalized_match
+
+        return None
+
+    def _extract_journal_name_from_subject(self, metadata: Dict[str, Any]) -> Optional[str]:
+        subject = self._coerce_metadata_value(metadata.get("subject"))
+        if not subject:
+            return None
+
+        normalized_subject = re.sub(r"\s+", " ", subject).strip()
+        match = re.match(r"^([A-Za-z&.\- ]+?)\s+(?:19|20)\d{2}(?:[.:; ].*)?$", normalized_subject)
+        if match:
+            candidate = self._normalize_journal_title_candidate(match.group(1))
+            if candidate:
+                return candidate
+
+        return self._normalize_journal_title_candidate(normalized_subject)
+
+    def _normalize_journal_title_candidate(self, value: Optional[str]) -> Optional[str]:
+        if value in (None, ""):
+            return None
+
+        candidate = re.sub(r"\s+", " ", str(value)).strip()
+        candidate = re.sub(r"^(?:review|research article|article)\b[:\s-]*", "", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\bwww\.[^\s]+", "", candidate, flags=re.IGNORECASE).strip(" -|,;")
+
+        lower_candidate = candidate.lower()
+        if any(token in lower_candidate for token in ("university of science", "school of materials science")):
+            return None
+
+        alias = self.JOURNAL_TITLE_ALIASES.get(lower_candidate)
+        if alias:
+            return alias
+
+        for pattern in self.JOURNAL_LINE_PATTERNS:
+            full_match = re.fullmatch(pattern, candidate, re.IGNORECASE)
+            if full_match:
+                return full_match.group(0)
 
         return None
 

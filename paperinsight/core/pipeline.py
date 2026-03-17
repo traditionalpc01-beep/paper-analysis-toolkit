@@ -346,7 +346,7 @@ class AnalysisPipeline:
         """补全影响因子。"""
         paper_info = paper_data.paper_info
         journal_name = paper_info.journal_name or paper_info.raw_journal_title
-        if not journal_name:
+        if not any((journal_name, paper_info.raw_issn, paper_info.raw_eissn)):
             return
 
         try:

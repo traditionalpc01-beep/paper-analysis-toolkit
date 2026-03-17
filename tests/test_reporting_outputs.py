@@ -11,18 +11,9 @@ def test_report_generator_uses_bilingual_headers_and_unique_filename(tmp_path):
             "File": "paper.pdf",
             "URL": "file:///tmp/paper.pdf",
             "期刊": "Nature",
-            "原始期刊标题": "NATURE",
-            "原始ISSN": "1476-4687",
-            "原始eISSN": "1476-4687",
-            "匹配期刊": "Nature",
-            "匹配ISSN": "1476-4687",
-            "匹配方式": "issn",
-            "期刊主页": "https://example.test/journal/nature",
             "影响因子": 12.3,
-            "影响因子年份": 2025,
-            "影响因子来源": "MJL_WEB",
-            "影响因子状态": "OK",
             "作者": "Alice",
+            "处理结果/简述": "处理成功：结构完整",
             "标题": "中文：示例标题\nEnglish: Sample Title",
             "器件结构": "ITO/EML/Al",
             "EQE": "20.5%",
@@ -43,39 +34,41 @@ def test_report_generator_uses_bilingual_headers_and_unique_filename(tmp_path):
 
     workbook = openpyxl.load_workbook(first_path)
     sheet = workbook.active
-    headers = [sheet.cell(row=1, column=idx).value for idx in range(1, 16)]
-    values = [sheet.cell(row=2, column=idx).value for idx in range(1, 16)]
+    headers = [sheet.cell(row=1, column=idx).value for idx in range(1, 9)]
+    values = [sheet.cell(row=2, column=idx).value for idx in range(1, 9)]
 
     assert headers == [
         "文件名 File",
         "文件地址 URL",
         "期刊名称 Journal",
-        "原始期刊标题 Raw Journal",
-        "原始ISSN Raw ISSN",
-        "原始eISSN Raw eISSN",
-        "匹配期刊 Matched Journal",
-        "匹配ISSN Matched ISSN",
-        "匹配方式 Match Method",
-        "期刊主页 Journal Profile URL",
         "影响因子 Impact Factor",
-        "影响因子年份 IF Year",
-        "影响因子来源 IF Source",
-        "影响因子状态 IF Status",
         "作者 Authors",
+        "处理结果/简述 Processing Status",
+        "论文标题 Title",
+        "器件结构 Device Structure",
     ]
-    assert values[:10] == [
+    assert values == [
         "paper.pdf",
         "file:///tmp/paper.pdf",
         "Nature",
-        "NATURE",
-        "1476-4687",
-        "1476-4687",
-        "Nature",
-        "1476-4687",
-        "issn",
-        "https://example.test/journal/nature",
+        12.3,
+        "Alice",
+        "处理成功：结构完整",
+        "中文：示例标题\nEnglish: Sample Title",
+        "ITO/EML/Al",
     ]
-    assert values[10:15] == [12.3, "2025", "MJL_WEB", "OK", "Alice"]
+
+    all_headers = [sheet.cell(row=1, column=idx).value for idx in range(1, sheet.max_column + 1)]
+    assert "原始期刊标题 Raw Journal" not in all_headers
+    assert "原始ISSN Raw ISSN" not in all_headers
+    assert "原始eISSN Raw eISSN" not in all_headers
+    assert "匹配期刊 Matched Journal" not in all_headers
+    assert "匹配ISSN Matched ISSN" not in all_headers
+    assert "匹配方式 Match Method" not in all_headers
+    assert "期刊主页 Journal Profile URL" not in all_headers
+    assert "影响因子年份 IF Year" not in all_headers
+    assert "影响因子来源 IF Source" not in all_headers
+    assert "影响因子状态 IF Status" not in all_headers
 
 
 def test_paper_data_to_excel_row_includes_journal_enrichment_fields():

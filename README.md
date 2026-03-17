@@ -309,7 +309,7 @@ paperinsight analyze --help
 
 - 调用 LLM 进行语义提取
 - 调用 OCR API 处理扫描版 PDF
-- 自动补全影响因子
+- 基于 MJL 元数据 + 官方 IF 接口补全/校正影响因子
 - 适合追求精度的批处理场景
 - **需要配置 API Key**
 
@@ -388,7 +388,8 @@ paperinsight analyze --help
 | 字段 | 说明 |
 |------|------|
 | 期刊名称 | 从首页或页眉提取 |
-| 影响因子 | PDF 原文或 Web 搜索补全 |
+| 影响因子 | PDF 原文提取，必要时通过 MJL 元数据与官方接口补全或校正 |
+| 影响因子状态 | 记录补全过程结果，如 `OK`、`NO_MATCH`、`NO_ACCESS` |
 | 论文标题 | 首页最大字号文本 |
 | 作者 | 论文署名 |
 | 器件结构 | 层级堆叠（如 ITO/HTL/EML...） |
@@ -429,6 +430,9 @@ paddlex:
 web_search:
   enabled: true
   timeout: 30
+  resolve_journal_metadata: true
+  fetch_official_impact_factor: true
+  correct_existing_impact_factor: true
 
 # 缓存
 cache:
@@ -457,6 +461,27 @@ pdf:
 - 配置文件使用 XOR + Base64 加密
 - 不会上传到远程服务器
 - 建议将 `~/.paperinsight/` 添加到 `.gitignore`
+
+---
+
+## 影响因子补全说明
+
+当前版本不再依赖旧的第三方搜索页抓取，而是采用两段式流程：
+
+1. 先用 `paperinsight.web.journal_resolver.MJLJournalResolver` 基于标题 / ISSN / eISSN 解析期刊元数据；
+2. 再用 `paperinsight.web.impact_factor_fetcher.MJLImpactFactorFetcher` 查询 MJL 官方资料接口中的最新可见 IF；
+3. 若原文 IF 缺失，或已有值明显异常 / 与官方值偏差较大，可自动补全或校正。
+
+Excel 中的 `影响因子状态 IF Status` 用于帮助抽样复核，常见取值：
+
+- `OK`：已拿到官方可见 IF
+- `NO_MATCH`：未找到唯一匹配期刊
+- `MULTI_MATCH`：匹配到多个候选，未自动选定
+- `NO_ACCESS`：命中期刊，但官方接口当前需要登录态
+- `NOT_VISIBLE`：已找到期刊，但响应中没有可见 IF 字段
+- `ERROR`：请求或解析过程中发生异常
+
+如果你希望完全离线运行，可将 `web_search.enabled` 设为 `false`。
 
 ---
 
@@ -509,7 +534,7 @@ paperinsight analyze   # 第三步
 - API 模式依赖网络和有效凭证
 - 扫描版 PDF 建议配置 OCR 能力
 - 自动提取结果建议人工抽样复核
-- Web 搜索补全的影响因子可能受网站可用性影响
+- 联网补全依赖 MJL 可访问性；若返回 `NO_ACCESS` / `NOT_VISIBLE`，建议保留原文值并人工复核
 
 ---
 
