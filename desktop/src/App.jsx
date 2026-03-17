@@ -28,6 +28,8 @@ const initialRunOptions = {
 const supportLinks = [
   { label: '项目仓库', url: 'https://github.com/traditionalpc01-beep/paper-analysis-toolkit' },
   { label: '提交 Issue', url: 'https://github.com/traditionalpc01-beep/paper-analysis-toolkit/issues' },
+  { label: 'Releases 下载页', url: 'https://github.com/traditionalpc01-beep/paper-analysis-toolkit/releases' },
+  { label: 'GitHub Actions', url: 'https://github.com/traditionalpc01-beep/paper-analysis-toolkit/actions' },
   { label: 'OpenAI Platform', url: 'https://platform.openai.com/' },
   { label: 'DeepSeek Platform', url: 'https://platform.deepseek.com/' },
   { label: 'Longcat 文档', url: 'https://longcat.chat/platform/docs/zh/' },
@@ -128,6 +130,111 @@ function buildRecommendedConfig(config, env) {
   return nextConfig;
 }
 
+function hasLlmCredentials(config) {
+  const provider = getNestedValue(config, 'llm.provider', 'deepseek');
+  const llmEnabled = Boolean(getNestedValue(config, 'llm.enabled', true));
+  if (!llmEnabled) {
+    return false;
+  }
+  if (provider === 'wenxin') {
+    return Boolean(
+      getNestedValue(config, 'llm.wenxin.client_id', '').trim() &&
+      getNestedValue(config, 'llm.wenxin.client_secret', '').trim()
+    );
+  }
+  return Boolean(getNestedValue(config, 'llm.api_key', '').trim());
+}
+
+function buildRecommendedOnboardingConfig(config, env) {
+  let nextConfig = buildRecommendedConfig(config, env);
+  const recommendedAnalysisMode = getNestedValue(env, 'recommendation.analysisMode', 'regex');
+  const networkAvailable = Boolean(getNestedValue(env, 'checks.network.available', false));
+
+  if (recommendedAnalysisMode !== 'api' && !hasLlmCredentials(nextConfig)) {
+    nextConfig = setNestedValue(nextConfig, 'llm.enabled', false);
+  }
+
+  if (!networkAvailable) {
+    nextConfig = setNestedValue(nextConfig, 'web_search.enabled', false);
+  }
+
+  return nextConfig;
+}
+
+function buildEnvironmentAlerts(env, config, runOptions) {
+  const alerts = [];
+  const readinessStatus = getNestedValue(env, 'readiness.status', 'limited');
+  const recommendedEngine = getNestedValue(env, 'recommendation.engineMode', '');
+  const currentEngine = getNestedValue(config, 'desktop.engine.mode', 'bundled');
+  const networkAvailable = Boolean(getNestedValue(env, 'checks.network.available', false));
+  const llmEnabled = Boolean(getNestedValue(config, 'llm.enabled', true));
+  const currentMode = runOptions.mode || 'auto';
+  const systemPythonAvailable = Boolean(getNestedValue(env, 'checks.systemPython.available', false));
+  const systemPythonReady = systemPythonAvailable && Boolean(getNestedValue(env, 'checks.systemPython.hasPaperInsight', false));
+
+  if (readinessStatus === 'blocked') {
+    alerts.push({
+      id: 'engine-blocked',
+      severity: 'danger',
+      title: '当前没有可直接启动的运行引擎',
+      description: getNestedValue(env, 'readiness.summary', '请先检查内置后端或系统 Python。'),
+      actions: ['open_settings', 'reopen_onboarding']
+    });
+  }
+
+  if (!networkAvailable) {
+    alerts.push({
+      id: 'network-offline',
+      severity: 'warning',
+      title: '基础联网受限，建议先用正则兜底',
+      description: getNestedValue(env, 'checks.network.message', '网络不可用时，API 提取和联网补全都可能失败。'),
+      actions: ['use_regex', 'open_settings']
+    });
+  }
+
+  if (llmEnabled && !hasLlmCredentials(config)) {
+    alerts.push({
+      id: 'llm-missing-creds',
+      severity: 'warning',
+      title: '已开启 LLM，但还没有完整 API 凭据',
+      description: '可以去设置页补齐 API Key，或者先关闭 LLM / 切换到正则兜底。',
+      actions: ['open_settings', 'use_regex']
+    });
+  }
+
+  if (currentEngine === 'system_python' && !systemPythonReady) {
+    alerts.push({
+      id: 'python-unready',
+      severity: 'danger',
+      title: '当前选择了系统 Python，但该环境还不能直接运行',
+      description: getNestedValue(env, 'checks.systemPython.message', '请检查 Python 路径和 paperinsight 安装状态。'),
+      actions: ['apply_recommendation', 'open_settings']
+    });
+  }
+
+  if (canApplyRecommendedEngine(recommendedEngine) && currentEngine !== recommendedEngine) {
+    alerts.push({
+      id: 'engine-drift',
+      severity: 'info',
+      title: '当前引擎与推荐值不一致',
+      description: `推荐使用 ${engineModeLabel(recommendedEngine)}，可一键应用推荐启动设置。`,
+      actions: ['apply_recommendation']
+    });
+  }
+
+  if (currentMode === 'api' && !networkAvailable) {
+    alerts.push({
+      id: 'api-offline',
+      severity: 'warning',
+      title: '当前运行模式是智能 API，但网络不可用',
+      description: '建议切回正则兜底，避免启动后立刻失败。',
+      actions: ['use_regex']
+    });
+  }
+
+  return alerts;
+}
+
 function hasConfiguredCredentials(config) {
   const provider = getNestedValue(config, 'llm.provider', 'deepseek');
   const llmEnabled = Boolean(getNestedValue(config, 'llm.enabled', true));
@@ -225,6 +332,7 @@ function OnboardingModal({
   visible,
   step,
   draftConfig,
+  env,
   setDraftValue,
   onBack,
   onNext,
@@ -242,6 +350,11 @@ function OnboardingModal({
   const engineMode = getNestedValue(draftConfig, 'desktop.engine.mode', 'bundled');
   const currentStep = wizardSteps[step];
   const isLastStep = step === wizardSteps.length - 1;
+  const recommendedEngine = getNestedValue(env, 'recommendation.engineMode', engineMode);
+  const recommendedAnalysisMode = getNestedValue(env, 'recommendation.analysisMode', 'regex');
+  const readinessSummary = getNestedValue(env, 'readiness.summary', '环境检测已完成。');
+  const networkAvailable = Boolean(getNestedValue(env, 'checks.network.available', false));
+  const systemPythonReady = Boolean(getNestedValue(env, 'checks.systemPython.available', false)) && Boolean(getNestedValue(env, 'checks.systemPython.hasPaperInsight', false));
 
   return (
     <div className="wizard-overlay">
@@ -278,6 +391,16 @@ function OnboardingModal({
               <section className="wizard-info-block sand full">
                 <h3>这一步会做什么</h3>
                 <p>我们会帮你设置 LLM 服务、运行引擎和常用默认项。你也可以先跳过，稍后从“服务配置”页重新打开向导。</p>
+              </section>
+              <section className="wizard-info-block full recommendation">
+                <h3>已根据当前环境预填推荐值</h3>
+                <p>{readinessSummary}</p>
+                <div className="wizard-inline-pills">
+                  <span>推荐引擎：{engineModeLabel(recommendedEngine)}</span>
+                  <span>推荐模式：{modeLabel(recommendedAnalysisMode)}</span>
+                  <span>{booleanStatusLabel(networkAvailable, '基础联网可用', '基础联网受限')}</span>
+                  <span>{booleanStatusLabel(systemPythonReady, 'Python 兜底可用', 'Python 兜底待补齐')}</span>
+                </div>
               </section>
             </div>
           ) : null}
@@ -327,6 +450,7 @@ function OnboardingModal({
             <div className="wizard-form-grid">
               <section className="wizard-choice-card">
                 <h3>运行引擎</h3>
+                <p className="wizard-hint">当前环境推荐：{engineModeLabel(recommendedEngine)}</p>
                 <div className="toggle-grid single wizard-toggle">
                   <label><input type="radio" name="wizard-engine" checked={engineMode === 'bundled'} onChange={() => setDraftValue('desktop.engine.mode', 'bundled')} />内置后端（推荐）</label>
                   <label><input type="radio" name="wizard-engine" checked={engineMode === 'system_python'} onChange={() => setDraftValue('desktop.engine.mode', 'system_python')} />系统 Python（高级用户）</label>
@@ -368,12 +492,12 @@ function OnboardingModal({
               <section className="wizard-summary-card">
                 <span>运行引擎</span>
                 <strong>{engineMode === 'bundled' ? '内置后端' : '系统 Python'}</strong>
-                <p>{engineMode === 'bundled' ? '优先面向普通用户，无需额外理解 Python。' : '保留本地 Python 可选能力。'}</p>
+                <p>{engineMode === 'bundled' ? '优先面向普通用户，无需额外理解 Python。' : '保留本地 Python 可选能力。'} 推荐值：{engineModeLabel(recommendedEngine)}</p>
               </section>
               <section className="wizard-summary-card">
                 <span>论文处理默认项</span>
                 <strong>{Boolean(getNestedValue(draftConfig, 'cache.enabled', true)) ? '缓存开启' : '缓存关闭'}</strong>
-                <p>MinerU：{Boolean(getNestedValue(draftConfig, 'mineru.enabled', true)) ? '启用' : '禁用'}，Web 搜索：{Boolean(getNestedValue(draftConfig, 'web_search.enabled', true)) ? '启用' : '禁用'}</p>
+                <p>MinerU：{Boolean(getNestedValue(draftConfig, 'mineru.enabled', true)) ? '启用' : '禁用'}，Web 搜索：{Boolean(getNestedValue(draftConfig, 'web_search.enabled', true)) ? '启用' : '禁用'}，推荐模式：{modeLabel(recommendedAnalysisMode)}</p>
               </section>
               <section className="wizard-summary-card full">
                 <span>完成后</span>
@@ -446,7 +570,7 @@ export default function App() {
         }));
 
         if (!onboardingCompleted && !existingCredentials) {
-          setWizardConfig(cloneConfig(response.config));
+          setWizardConfig(buildRecommendedOnboardingConfig(response.config, response.env));
           setOnboarding({ visible: true, step: 0, saving: false, error: '' });
         }
       } catch (error) {
@@ -646,6 +770,24 @@ export default function App() {
     setRunOptions((current) => ({ ...current, mode: 'regex' }));
   }
 
+  function handleAlertAction(action) {
+    if (action === 'open_settings') {
+      setActiveTab('settings');
+      return;
+    }
+    if (action === 'reopen_onboarding') {
+      reopenOnboarding();
+      return;
+    }
+    if (action === 'use_regex') {
+      useFallbackMode();
+      return;
+    }
+    if (action === 'apply_recommendation') {
+      applyRecommendedSetup();
+    }
+  }
+
   async function finishOnboarding(configToPersist) {
     setOnboarding((current) => ({ ...current, saving: true, error: '' }));
     try {
@@ -659,12 +801,12 @@ export default function App() {
   }
 
   function reopenOnboarding() {
-    setWizardConfig(cloneConfig(config));
+    setWizardConfig(buildRecommendedOnboardingConfig(config, env));
     setOnboarding({ visible: true, step: 0, saving: false, error: '' });
   }
 
   function skipOnboarding() {
-    finishOnboarding(config);
+    finishOnboarding(wizardConfig || buildRecommendedOnboardingConfig(config, env));
   }
 
   function nextWizardStep() {
@@ -768,6 +910,7 @@ export default function App() {
   const lastKnownOutputDir = job.outputDir || getNestedValue(config, 'desktop.ui.last_output_dir', '');
   const recommendationApplicable = canApplyRecommendedEngine(recommendedEngine);
   const currentMatchesRecommendation = engineMode === recommendedEngine && runOptions.mode === recommendedAnalysisMode;
+  const environmentAlerts = buildEnvironmentAlerts(env, config, runOptions);
 
   return (
     <>
@@ -880,6 +1023,43 @@ export default function App() {
                   </div>
                 </div>
               </article>
+
+              {environmentAlerts.length ? (
+                <article className="panel-card wide">
+                  <div className="panel-head">
+                    <div>
+                      <span className="panel-kicker">Diagnostics</span>
+                      <h3>启动异常提示</h3>
+                    </div>
+                  </div>
+                  <div className="alert-stack">
+                    {environmentAlerts.map((alert) => (
+                      <section key={alert.id} className={`alert-card ${alert.severity}`}>
+                        <div>
+                          <strong>{alert.title}</strong>
+                          <p>{alert.description}</p>
+                        </div>
+                        <div className="inline-actions">
+                          {alert.actions.map((action) => (
+                            <button
+                              key={action}
+                              className="ghost small"
+                              onClick={() => handleAlertAction(action)}
+                            >
+                              {{
+                                open_settings: '打开设置',
+                                reopen_onboarding: '重新运行向导',
+                                use_regex: '切到正则兜底',
+                                apply_recommendation: '应用推荐设置'
+                              }[action] || action}
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                </article>
+              ) : null}
 
               <article className="panel-card">
                 <div className="panel-head">
@@ -1154,6 +1334,40 @@ export default function App() {
                     </div>
                   </section>
 
+                  <section className="help-card full">
+                    <h4>环境异常与修复建议</h4>
+                    {environmentAlerts.length ? (
+                      <div className="alert-stack compact">
+                        {environmentAlerts.map((alert) => (
+                          <section key={`help-${alert.id}`} className={`alert-card ${alert.severity}`}>
+                            <div>
+                              <strong>{alert.title}</strong>
+                              <p>{alert.description}</p>
+                            </div>
+                            <div className="inline-actions">
+                              {alert.actions.map((action) => (
+                                <button
+                                  key={`help-${alert.id}-${action}`}
+                                  className="ghost small"
+                                  onClick={() => handleAlertAction(action)}
+                                >
+                                  {{
+                                    open_settings: '打开设置',
+                                    reopen_onboarding: '重新运行向导',
+                                    use_regex: '切到正则兜底',
+                                    apply_recommendation: '应用推荐设置'
+                                  }[action] || action}
+                                </button>
+                              ))}
+                            </div>
+                          </section>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="empty-inline">当前没有需要优先处理的启动异常。</div>
+                    )}
+                  </section>
+
                   <section className="help-card">
                     <h4>常见操作</h4>
                     <div className="result-list">
@@ -1181,6 +1395,30 @@ export default function App() {
                           <strong>{item.url}</strong>
                         </button>
                       ))}
+                    </div>
+                  </section>
+
+                  <section className="help-card full">
+                    <h4>发布与下载</h4>
+                    <div className="release-grid">
+                      <div className="result-item static">
+                        <span>普通下载</span>
+                        <strong>正式版本优先从 GitHub Releases 下载 `PaperInsight-Setup-版本.exe`。</strong>
+                        <div className="inline-actions">
+                          <button className="ghost small" onClick={() => openExternal('https://github.com/traditionalpc01-beep/paper-analysis-toolkit/releases')}>打开 Releases</button>
+                        </div>
+                      </div>
+                      <div className="result-item static">
+                        <span>预发布验证</span>
+                        <strong>推送到 `main` 后，可先在 GitHub Actions 下载最新安装产物进行验证。</strong>
+                        <div className="inline-actions">
+                          <button className="ghost small" onClick={() => openExternal('https://github.com/traditionalpc01-beep/paper-analysis-toolkit/actions')}>打开 Actions</button>
+                        </div>
+                      </div>
+                      <div className="result-item static">
+                        <span>发布顺序</span>
+                        <strong>更新版本号，推送 main 验证，再打 v* 标签发布正式安装包。</strong>
+                      </div>
                     </div>
                   </section>
 
@@ -1342,6 +1580,7 @@ export default function App() {
         visible={onboarding.visible}
         step={onboarding.step}
         draftConfig={wizardConfig}
+        env={env}
         setDraftValue={updateWizardConfig}
         onBack={previousWizardStep}
         onNext={nextWizardStep}

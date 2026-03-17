@@ -105,11 +105,13 @@ python scripts/build_windows_exe.py
 ### 当前已实现
 
 - 首次启动向导：第一次打开时按步骤完成 API Key、引擎模式和默认项配置
+- 推荐设置联动：首次向导会自动吸收环境推荐，并支持一键应用推荐启动方式
 - 图形化界面：选择论文目录、输出目录、处理模式和运行选项
 - 结果详情区：分析完成后直接查看报表文件、成功论文清单和失败原因
 - 结果筛选：支持按关键词搜索成功/失败结果，并快速切换只看成功或只看失败
 - 帮助中心：集中查看运行环境、本地路径、常见操作入口和外部支持链接
 - 启动环境校验：启动时自动检测基础联网、系统 Python 与内置后端，并给出推荐启动方式与兜底工具
+- 启动异常提示：会针对网络受限、缺少 API Key、Python 不完整等场景给出修复建议
 - 安装包品牌化：已补充桌面应用图标、Windows 安装包图标和统一安装产物命名
 - 设置页：直接配置 API Key、LLM 提供商、MinerU 与运行引擎
 - 双引擎设计：
@@ -144,6 +146,28 @@ npm run dist:win
 ```
 
 构建结果位于 `desktop/release/`。
+
+### 桌面版发布流程
+
+建议按下面顺序发布 Windows 桌面版：
+
+```bash
+# 1) 更新版本号
+#    - paperinsight/__init__.py
+#    - desktop/package.json
+
+# 2) 推送 main，先验证 GitHub Actions 产物
+git push origin main
+
+# 3) 验证通过后打正式标签
+git tag v3.0.0
+git push origin v3.0.0
+```
+
+发布后可从两个入口获取安装包：
+
+- `GitHub Actions`：适合先验证最新构建产物
+- `GitHub Releases`：适合给最终用户分发正式安装包 `PaperInsight-Setup-<版本>.exe`
 
 如需重新生成桌面端图标资源，可执行：
 
