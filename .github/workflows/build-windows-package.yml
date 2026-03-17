@@ -27,15 +27,15 @@ jobs:
 
       - name: Resolve version
         id: version
-        shell: pwsh
+        shell: bash
         run: |
-          if ($env:GITHUB_REF -like "refs/tags/v*") {
-            $version = $env:GITHUB_REF.Substring(11)
-          } else {
-            $version = python -c "import pathlib, re; text = pathlib.Path('paperinsight/__init__.py').read_text(encoding='utf-8'); print(re.search(r'__version__\\s*=\\s*\"([^\"]+)\"', text).group(1))"
-          }
-          "value=$version" >> $env:GITHUB_OUTPUT
-          Write-Host "Building version $version"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF#refs/tags/v}"
+          else
+            version="$(python -c "import runpy; print(runpy.run_path('paperinsight/__init__.py')['__version__'])")"
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "Building version $version"
 
       - name: Install dependencies
         run: |
