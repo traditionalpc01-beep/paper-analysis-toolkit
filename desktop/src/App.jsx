@@ -7,10 +7,10 @@ const tabs = [
 ];
 
 const wizardSteps = [
-  { id: 'welcome', title: '欢迎使用' },
-  { id: 'llm', title: '配置 AI 服务' },
-  { id: 'engine', title: '选择运行引擎' },
-  { id: 'review', title: '确认并开始' }
+  { id: 'environment', title: '检查环境' },
+  { id: 'longcat', title: '配置 Longcat' },
+  { id: 'mineru', title: '配置 MinerU' },
+  { id: 'review', title: '确认并保存' }
 ];
 
 const initialRunOptions = {
@@ -33,6 +33,7 @@ const supportLinks = [
   { label: 'OpenAI Platform', url: 'https://platform.openai.com/' },
   { label: 'DeepSeek Platform', url: 'https://platform.deepseek.com/' },
   { label: 'Longcat 文档', url: 'https://longcat.chat/platform/docs/zh/' },
+  { label: 'MinerU Token 申请页', url: 'https://mineru.net/apiManage/token' },
   { label: 'MinerU 官网', url: 'https://mineru.net/' }
 ];
 
@@ -131,7 +132,7 @@ function buildRecommendedConfig(config, env) {
 }
 
 function hasLlmCredentials(config) {
-  const provider = getNestedValue(config, 'llm.provider', 'deepseek');
+  const provider = getNestedValue(config, 'llm.provider', 'longcat');
   const llmEnabled = Boolean(getNestedValue(config, 'llm.enabled', true));
   if (!llmEnabled) {
     return false;
@@ -147,12 +148,17 @@ function hasLlmCredentials(config) {
 
 function buildRecommendedOnboardingConfig(config, env) {
   let nextConfig = buildRecommendedConfig(config, env);
-  const recommendedAnalysisMode = getNestedValue(env, 'recommendation.analysisMode', 'regex');
   const networkAvailable = Boolean(getNestedValue(env, 'checks.network.available', false));
 
-  if (recommendedAnalysisMode !== 'api' && !hasLlmCredentials(nextConfig)) {
-    nextConfig = setNestedValue(nextConfig, 'llm.enabled', false);
-  }
+  nextConfig = setNestedValue(nextConfig, 'llm.enabled', true);
+  nextConfig = setNestedValue(nextConfig, 'llm.provider', 'longcat');
+  nextConfig = setNestedValue(nextConfig, 'llm.model', getNestedValue(nextConfig, 'llm.model', 'LongCat-Flash-Chat') || 'LongCat-Flash-Chat');
+  nextConfig = setNestedValue(nextConfig, 'mineru.enabled', true);
+  nextConfig = setNestedValue(nextConfig, 'mineru.mode', getNestedValue(nextConfig, 'mineru.mode', 'api') || 'api');
+  nextConfig = setNestedValue(nextConfig, 'mineru.model_version', getNestedValue(nextConfig, 'mineru.model_version', 'vlm') || 'vlm');
+  nextConfig = setNestedValue(nextConfig, 'mineru.output_format', getNestedValue(nextConfig, 'mineru.output_format', 'markdown') || 'markdown');
+  nextConfig = setNestedValue(nextConfig, 'mineru.method', getNestedValue(nextConfig, 'mineru.method', 'auto') || 'auto');
+  nextConfig = setNestedValue(nextConfig, 'desktop.engine.mode', 'bundled');
 
   if (!networkAvailable) {
     nextConfig = setNestedValue(nextConfig, 'web_search.enabled', false);
@@ -236,7 +242,7 @@ function buildEnvironmentAlerts(env, config, runOptions) {
 }
 
 function hasConfiguredCredentials(config) {
-  const provider = getNestedValue(config, 'llm.provider', 'deepseek');
+  const provider = getNestedValue(config, 'llm.provider', 'longcat');
   const llmEnabled = Boolean(getNestedValue(config, 'llm.enabled', true));
   const llmApiKey = getNestedValue(config, 'llm.api_key', '');
   const wenxinId = getNestedValue(config, 'llm.wenxin.client_id', '');
@@ -252,27 +258,27 @@ function hasConfiguredCredentials(config) {
 }
 
 function validateWizardStep(step, draftConfig) {
-  if (step === 1 && getNestedValue(draftConfig, 'llm.enabled', true)) {
-    const provider = getNestedValue(draftConfig, 'llm.provider', 'deepseek');
-    if (provider === 'wenxin') {
-      if (!getNestedValue(draftConfig, 'llm.wenxin.client_id', '').trim()) {
-        return '请填写文心一言 Client ID，或关闭 LLM 语义提取。';
-      }
-      if (!getNestedValue(draftConfig, 'llm.wenxin.client_secret', '').trim()) {
-        return '请填写文心一言 Client Secret，或关闭 LLM 语义提取。';
-      }
-      return '';
-    }
-
+  if (step === 1) {
     if (!getNestedValue(draftConfig, 'llm.api_key', '').trim()) {
-      return `请填写 ${formatProviderLabel(provider)} API Key，或关闭 LLM 语义提取。`;
+      return '请先填写 Longcat API Key。';
+    }
+    if (!getNestedValue(draftConfig, 'llm.model', '').trim()) {
+      return '请先选择一个 Longcat 模型。';
     }
   }
 
-  if (step === 2 && getNestedValue(draftConfig, 'desktop.engine.mode', 'bundled') === 'system_python') {
-    const pythonPath = getNestedValue(draftConfig, 'desktop.engine.python_path', '').trim();
-    if (!pythonPath) {
-      return '系统 Python 模式建议填写 Python 路径，方便桌面端直接调用。';
+  if (step === 2 && Boolean(getNestedValue(draftConfig, 'mineru.enabled', true))) {
+    if (getNestedValue(draftConfig, 'mineru.mode', 'api') === 'api' && !getNestedValue(draftConfig, 'mineru.token', '').trim()) {
+      return '您选择了 MinerU API，请先填写 Token。';
+    }
+    if (!getNestedValue(draftConfig, 'mineru.model_version', '').trim()) {
+      return '请先选择 MinerU 模型版本。';
+    }
+    if (!getNestedValue(draftConfig, 'mineru.output_format', '').trim()) {
+      return '请先选择 MinerU 输出格式。';
+    }
+    if (!getNestedValue(draftConfig, 'mineru.method', '').trim()) {
+      return '请先选择 MinerU 解析方式。';
     }
   }
 
@@ -345,8 +351,8 @@ function OnboardingModal({
     return null;
   }
 
-  const provider = getNestedValue(draftConfig, 'llm.provider', 'deepseek');
-  const llmEnabled = Boolean(getNestedValue(draftConfig, 'llm.enabled', true));
+  const provider = 'longcat';
+  const llmEnabled = true;
   const engineMode = getNestedValue(draftConfig, 'desktop.engine.mode', 'bundled');
   const currentStep = wizardSteps[step];
   const isLastStep = step === wizardSteps.length - 1;
@@ -363,9 +369,8 @@ function OnboardingModal({
           <div>
             <span className="eyebrow">首次启动向导</span>
             <h2>{currentStep.title}</h2>
-            <p>先完成一次最小配置，后续使用就可以直接点选运行。</p>
+            <p>我们会按固定顺序带您完成：先检查环境，再配 Longcat，再配 MinerU，最后确认保存。配好后命令行和桌面版都能直接用。</p>
           </div>
-          <button className="ghost small" onClick={onSkip} disabled={saving}>跳过向导</button>
         </div>
 
         <div className="wizard-progress">
@@ -381,133 +386,135 @@ function OnboardingModal({
           {step === 0 ? (
             <div className="wizard-panel-grid">
               <section className="wizard-info-block accent">
-                <h3>默认体验</h3>
-                <p>普通用户推荐使用内置后端 + 图形界面，安装后只需要补 API Key 即可开始分析。</p>
+                <h3>先看一眼环境</h3>
+                <p>这一步只是帮您确认软件现在能不能顺利启动，不会改坏任何设置。</p>
               </section>
               <section className="wizard-info-block teal">
-                <h3>高级模式</h3>
-                <p>如果你已经有 Python 环境和源码仓库，也可以切换到系统 Python 模式继续沿用原有脚本能力。</p>
+                <h3>桌面版默认怎么跑</h3>
+                <p>桌面版默认使用内置后端，也就是“装好就能用”的模式。大多数人不用自己折腾 Python。</p>
               </section>
               <section className="wizard-info-block sand full">
-                <h3>这一步会做什么</h3>
-                <p>我们会帮你设置 LLM 服务、运行引擎和常用默认项。你也可以先跳过，稍后从“服务配置”页重新打开向导。</p>
-              </section>
-              <section className="wizard-info-block full recommendation">
-                <h3>已根据当前环境预填推荐值</h3>
+                <h3>您现在看到的结果</h3>
                 <p>{readinessSummary}</p>
                 <div className="wizard-inline-pills">
-                  <span>推荐引擎：{engineModeLabel(recommendedEngine)}</span>
-                  <span>推荐模式：{modeLabel(recommendedAnalysisMode)}</span>
+                  <span>默认后端：内置后端 bundled</span>
                   <span>{booleanStatusLabel(networkAvailable, '基础联网可用', '基础联网受限')}</span>
-                  <span>{booleanStatusLabel(systemPythonReady, 'Python 兜底可用', 'Python 兜底待补齐')}</span>
+                  <span>{booleanStatusLabel(systemPythonReady, '系统 Python 可作为备用', '系统 Python 还不能直接备用')}</span>
+                  <span>推荐分析模式：{modeLabel(recommendedAnalysisMode)}</span>
                 </div>
+              </section>
+              <section className="wizard-info-block full recommendation">
+                <h3>下一步要做什么</h3>
+                <p>下一步我们只配置 Longcat 的 3 件事：API Key、连接地址、模型。每一项都由您自己判断，我们不会替您做决定。</p>
               </section>
             </div>
           ) : null}
 
           {step === 1 ? (
             <div className="wizard-form-grid">
-              <label className="field compact">
-                <span>启用 LLM 语义提取</span>
-                <div className="toggle-grid single wizard-toggle">
-                  <label><input type="checkbox" checked={llmEnabled} onChange={(event) => setDraftValue('llm.enabled', event.target.checked)} />启用后可使用 OpenAI / DeepSeek / Longcat / 文心一言做语义提取</label>
+              <section className="wizard-choice-card wide-field">
+                <h3>Longcat 是什么</h3>
+                <p className="wizard-hint">把它理解成软件连上 AI 的钥匙服务就行。没有 API Key，就没法做智能提取。</p>
+                <div className="inline-actions">
+                  <button className="ghost small" onClick={() => window.paperInsight.openExternal('https://longcat.chat/platform/docs/zh/')}>打开 Longcat 文档</button>
                 </div>
+              </section>
+              <label className="field compact wide-field">
+                <span>Longcat API Key</span>
+                <input type="password" value={getNestedValue(draftConfig, 'llm.api_key', '')} onChange={(event) => setDraftValue('llm.api_key', event.target.value)} placeholder="请粘贴您的 Longcat API Key" />
               </label>
-              <label className="field compact">
-                <span>LLM 提供商</span>
-                <select value={provider} onChange={(event) => setDraftValue('llm.provider', event.target.value)}>
-                  <option value="longcat">Longcat</option>
-                  <option value="deepseek">DeepSeek</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="wenxin">文心一言</option>
-                </select>
+              <label className="field compact wide-field">
+                <span>连接地址 / 中转地址</span>
+                <input value={getNestedValue(draftConfig, 'llm.base_url', '')} onChange={(event) => setDraftValue('llm.base_url', event.target.value)} placeholder="不知道就先留空，需要中转时再填" />
               </label>
-              {provider === 'wenxin' ? (
-                <>
-                  <label className="field compact">
-                    <span>Client ID</span>
-                    <input type="password" value={getNestedValue(draftConfig, 'llm.wenxin.client_id', '')} onChange={(event) => setDraftValue('llm.wenxin.client_id', event.target.value)} placeholder="填写文心一言 Client ID" />
-                  </label>
-                  <label className="field compact">
-                    <span>Client Secret</span>
-                    <input type="password" value={getNestedValue(draftConfig, 'llm.wenxin.client_secret', '')} onChange={(event) => setDraftValue('llm.wenxin.client_secret', event.target.value)} placeholder="填写文心一言 Client Secret" />
-                  </label>
-                </>
-              ) : (
-                <label className="field compact wide-field">
-                  <span>API Key</span>
-                  <input type="password" value={getNestedValue(draftConfig, 'llm.api_key', '')} onChange={(event) => setDraftValue('llm.api_key', event.target.value)} placeholder={`填写 ${formatProviderLabel(provider)} API Key`} />
-                </label>
-              )}
               <label className="field compact wide-field">
                 <span>模型名称</span>
-                <input value={getNestedValue(draftConfig, 'llm.model', '')} onChange={(event) => setDraftValue('llm.model', event.target.value)} placeholder="例如 gpt-4o / deepseek-chat / LongCat-Flash-Chat" />
+                <select value={getNestedValue(draftConfig, 'llm.model', 'LongCat-Flash-Chat')} onChange={(event) => setDraftValue('llm.model', event.target.value)}>
+                  <option value="LongCat-Flash-Chat">LongCat-Flash-Chat - 通用版，适合大多数人</option>
+                  <option value="LongCat-Flash-Thinking">LongCat-Flash-Thinking - 更偏深度思考</option>
+                  <option value="LongCat-Flash-Thinking-2601">LongCat-Flash-Thinking-2601 - Thinking 的升级版</option>
+                  <option value="LongCat-Flash-Lite">LongCat-Flash-Lite - 更轻更省</option>
+                  <option value="LongCat-Flash-Omni-2603">LongCat-Flash-Omni-2603 - 多模态版本</option>
+                </select>
               </label>
             </div>
           ) : null}
 
           {step === 2 ? (
             <div className="wizard-form-grid">
-              <section className="wizard-choice-card">
-                <h3>运行引擎</h3>
-                <p className="wizard-hint">当前环境推荐：{engineModeLabel(recommendedEngine)}</p>
-                <div className="toggle-grid single wizard-toggle">
-                  <label><input type="radio" name="wizard-engine" checked={engineMode === 'bundled'} onChange={() => setDraftValue('desktop.engine.mode', 'bundled')} />内置后端（推荐）</label>
-                  <label><input type="radio" name="wizard-engine" checked={engineMode === 'system_python'} onChange={() => setDraftValue('desktop.engine.mode', 'system_python')} />系统 Python（高级用户）</label>
+              <section className="wizard-choice-card wide-field">
+                <h3>MinerU 是什么</h3>
+                <p className="wizard-hint">把它理解成“更会拆 PDF 的帮手”就行。大多数用户建议优先用 API 模式。</p>
+                <div className="inline-actions">
+                  <button className="ghost small" onClick={() => window.paperInsight.openExternal('https://mineru.net/apiManage/token')}>打开 MinerU Token 申请页</button>
                 </div>
-                <label className="field compact">
-                  <span>Python 路径</span>
-                  <input value={getNestedValue(draftConfig, 'desktop.engine.python_path', '')} onChange={(event) => setDraftValue('desktop.engine.python_path', event.target.value)} placeholder="如 C:/Python311/python.exe" />
-                </label>
+                <p className="wizard-hint">提醒：第一次申请可能要等一会儿，Token 一般只有 90 天有效期。</p>
               </section>
-              <section className="wizard-choice-card">
-                <h3>文档解析与联网能力</h3>
-                <div className="toggle-grid single wizard-toggle">
-                  <label><input type="checkbox" checked={Boolean(getNestedValue(draftConfig, 'mineru.enabled', true))} onChange={(event) => setDraftValue('mineru.enabled', event.target.checked)} />启用 MinerU 解析</label>
-                  <label><input type="checkbox" checked={Boolean(getNestedValue(draftConfig, 'web_search.enabled', true))} onChange={(event) => setDraftValue('web_search.enabled', event.target.checked)} />启用影响因子联网补全</label>
-                  <label><input type="checkbox" checked={Boolean(getNestedValue(draftConfig, 'cache.enabled', true))} onChange={(event) => setDraftValue('cache.enabled', event.target.checked)} />启用缓存</label>
-                </div>
-                <label className="field compact">
-                  <span>MinerU 模式</span>
-                  <select value={getNestedValue(draftConfig, 'mineru.mode', 'cli')} onChange={(event) => setDraftValue('mineru.mode', event.target.value)}>
-                    <option value="cli">本地 CLI</option>
-                    <option value="api">云端 API</option>
-                  </select>
-                </label>
-                <label className="field compact">
-                  <span>MinerU Token</span>
-                  <input type="password" value={getNestedValue(draftConfig, 'mineru.token', '')} onChange={(event) => setDraftValue('mineru.token', event.target.value)} placeholder="可稍后补充" />
-                </label>
-              </section>
+              <div className="toggle-grid single wizard-toggle wide-field">
+                <label><input type="checkbox" checked={Boolean(getNestedValue(draftConfig, 'mineru.enabled', true))} onChange={(event) => setDraftValue('mineru.enabled', event.target.checked)} />启用 MinerU。开了之后，通常 PDF 拆得更完整。</label>
+              </div>
+              <label className="field compact">
+                <span>MinerU 模式</span>
+                <select value={getNestedValue(draftConfig, 'mineru.mode', 'api')} onChange={(event) => setDraftValue('mineru.mode', event.target.value)}>
+                  <option value="api">api - 推荐，大多数用户选这个</option>
+                  <option value="cli">cli - 适合会自己装环境的人</option>
+                </select>
+              </label>
+              <label className="field compact">
+                <span>MinerU Token</span>
+                <input type="password" value={getNestedValue(draftConfig, 'mineru.token', '')} onChange={(event) => setDraftValue('mineru.token', event.target.value)} placeholder="如果您选 api，这里就要填写 Token" />
+              </label>
+              <label className="field compact">
+                <span>模型版本</span>
+                <select value={getNestedValue(draftConfig, 'mineru.model_version', 'vlm')} onChange={(event) => setDraftValue('mineru.model_version', event.target.value)}>
+                  <option value="vlm">vlm - 推荐，适合大多数论文</option>
+                  <option value="pipeline">pipeline - 偏兼容场景</option>
+                  <option value="MinerU-HTML">MinerU-HTML - 偏 HTML 结果</option>
+                </select>
+              </label>
+              <label className="field compact">
+                <span>输出格式</span>
+                <select value={getNestedValue(draftConfig, 'mineru.output_format', 'markdown')} onChange={(event) => setDraftValue('mineru.output_format', event.target.value)}>
+                  <option value="markdown">markdown - 更适合后续继续分析</option>
+                  <option value="json">json - 更适合程序读取</option>
+                </select>
+              </label>
+              <label className="field compact wide-field">
+                <span>解析方式</span>
+                <select value={getNestedValue(draftConfig, 'mineru.method', 'auto')} onChange={(event) => setDraftValue('mineru.method', event.target.value)}>
+                  <option value="auto">auto - 让程序自己判断，推荐</option>
+                  <option value="txt">txt - 更偏向直接读文字</option>
+                  <option value="ocr">ocr - 更偏向识别扫描图像</option>
+                </select>
+              </label>
             </div>
           ) : null}
 
           {step === 3 ? (
             <div className="wizard-summary-grid">
               <section className="wizard-summary-card">
-                <span>LLM</span>
-                <strong>{llmEnabled ? formatProviderLabel(provider) : '关闭，先走正则兜底'}</strong>
-                <p>{llmEnabled ? '已准备好语义提取入口。' : '后续仍可在设置页补充 API Key。'}</p>
+                <span>环境</span>
+                <strong>基础环境检查已完成</strong>
+                <p>桌面版默认会使用 bundled 内置后端；命令行和桌面端会共用同一份配置。</p>
               </section>
               <section className="wizard-summary-card">
-                <span>运行引擎</span>
-                <strong>{engineMode === 'bundled' ? '内置后端' : '系统 Python'}</strong>
-                <p>{engineMode === 'bundled' ? '优先面向普通用户，无需额外理解 Python。' : '保留本地 Python 可选能力。'} 推荐值：{engineModeLabel(recommendedEngine)}</p>
+                <span>Longcat</span>
+                <strong>{getNestedValue(draftConfig, 'llm.model', 'LongCat-Flash-Chat')}</strong>
+                <p>{getNestedValue(draftConfig, 'llm.base_url', '').trim() ? `您填写了连接地址：${getNestedValue(draftConfig, 'llm.base_url', '')}` : '您没有填写连接地址，程序会优先走默认官方地址。'}</p>
               </section>
               <section className="wizard-summary-card">
-                <span>论文处理默认项</span>
-                <strong>{Boolean(getNestedValue(draftConfig, 'cache.enabled', true)) ? '缓存开启' : '缓存关闭'}</strong>
-                <p>MinerU：{Boolean(getNestedValue(draftConfig, 'mineru.enabled', true)) ? '启用' : '禁用'}，Web 搜索：{Boolean(getNestedValue(draftConfig, 'web_search.enabled', true)) ? '启用' : '禁用'}，推荐模式：{modeLabel(recommendedAnalysisMode)}</p>
+                <span>MinerU</span>
+                <strong>{Boolean(getNestedValue(draftConfig, 'mineru.enabled', true)) ? `${getNestedValue(draftConfig, 'mineru.mode', 'api')} 模式` : '已关闭'}</strong>
+                <p>模型版本：{getNestedValue(draftConfig, 'mineru.model_version', 'vlm')}；输出格式：{getNestedValue(draftConfig, 'mineru.output_format', 'markdown')}；解析方式：{getNestedValue(draftConfig, 'mineru.method', 'auto')}</p>
               </section>
               <section className="wizard-summary-card full">
-                <span>完成后</span>
-                <strong>进入分析工作台</strong>
-                <p>你可以直接选择论文目录开始分析，或者去“服务配置”页继续补充更细的参数。</p>
+                <span>确认后会发生什么</span>
+                <strong>保存到同一份用户配置</strong>
+                <p>点“完成配置”后，这份设置会立刻写入本机配置文件。之后无论您用命令行还是桌面端，都会直接读取这份配置。</p>
               </section>
             </div>
           ) : null}
         </div>
-
         {error ? <div className="wizard-error">{error}</div> : null}
 
         <div className="wizard-actions">
@@ -554,8 +561,6 @@ export default function App() {
       try {
         const response = await window.paperInsight.getConfig();
         const onboardingCompleted = Boolean(getNestedValue(response.config, 'desktop.ui.onboarding_completed', false));
-        const existingCredentials = hasConfiguredCredentials(response.config);
-
         setConfig(response.config);
         setMeta(response.meta);
         setEnv(response.env);
@@ -569,7 +574,7 @@ export default function App() {
           bilingual: Boolean(getNestedValue(response.config, 'output.bilingual_text', false))
         }));
 
-        if (!onboardingCompleted && !existingCredentials) {
+        if (!onboardingCompleted) {
           setWizardConfig(buildRecommendedOnboardingConfig(response.config, response.env));
           setOnboarding({ visible: true, step: 0, saving: false, error: '' });
         }
@@ -899,7 +904,7 @@ export default function App() {
     return <div className="loading-shell error">加载失败：{loadState.error}</div>;
   }
 
-  const provider = getNestedValue(config, 'llm.provider', 'deepseek');
+  const provider = getNestedValue(config, 'llm.provider', 'longcat');
   const engineMode = getNestedValue(config, 'desktop.engine.mode', 'bundled');
   const onboardingCompleted = Boolean(getNestedValue(config, 'desktop.ui.onboarding_completed', false));
   const recommendedEngine = getNestedValue(env, 'recommendation.engineMode', engineMode);
@@ -1454,6 +1459,9 @@ export default function App() {
                 <div className="toggle-grid single">
                   <label><input type="checkbox" checked={Boolean(getNestedValue(config, 'llm.enabled', true))} onChange={(event) => updateConfig('llm.enabled', event.target.checked)} />启用 LLM 语义提取</label>
                 </div>
+                <div className="inline-actions stacked">
+                  <button className="ghost small" onClick={() => window.paperInsight.openExternal('https://longcat.chat/platform/docs/zh/')}>打开 Longcat 文档</button>
+                </div>
                 <label className="field compact">
                   <span>提供商</span>
                   <select value={provider} onChange={(event) => updateConfig('llm.provider', event.target.value)}>
@@ -1486,7 +1494,7 @@ export default function App() {
                 </label>
                 <label className="field compact">
                   <span>自定义 Base URL</span>
-                  <input value={getNestedValue(config, 'llm.base_url', '')} onChange={(event) => updateConfig('llm.base_url', event.target.value)} placeholder="留空则使用官方地址" />
+                  <input value={getNestedValue(config, 'llm.base_url', '')} onChange={(event) => updateConfig('llm.base_url', event.target.value)} placeholder="不知道就留空，需要中转时再填" />
                 </label>
               </article>
 
@@ -1528,16 +1536,42 @@ export default function App() {
                   <label><input type="checkbox" checked={Boolean(getNestedValue(config, 'web_search.enabled', true))} onChange={(event) => updateConfig('web_search.enabled', event.target.checked)} />启用影响因子联网补全</label>
                   <label><input type="checkbox" checked={Boolean(getNestedValue(config, 'mineru.enabled', true))} onChange={(event) => updateConfig('mineru.enabled', event.target.checked)} />启用 MinerU 解析</label>
                 </div>
+                <div className="inline-actions stacked">
+                  <button className="ghost small" onClick={() => window.paperInsight.openExternal('https://mineru.net/apiManage/token')}>打开 MinerU Token 申请页</button>
+                </div>
                 <label className="field compact">
                   <span>MinerU 模式</span>
-                  <select value={getNestedValue(config, 'mineru.mode', 'cli')} onChange={(event) => updateConfig('mineru.mode', event.target.value)}>
+                  <select value={getNestedValue(config, 'mineru.mode', 'api')} onChange={(event) => updateConfig('mineru.mode', event.target.value)}>
+                    <option value="api">云端 API（推荐）</option>
                     <option value="cli">本地 CLI</option>
-                    <option value="api">云端 API</option>
                   </select>
                 </label>
                 <label className="field compact">
                   <span>MinerU Token</span>
                   <input type="password" value={getNestedValue(config, 'mineru.token', '')} onChange={(event) => updateConfig('mineru.token', event.target.value)} />
+                </label>
+                <label className="field compact">
+                  <span>模型版本</span>
+                  <select value={getNestedValue(config, 'mineru.model_version', 'vlm')} onChange={(event) => updateConfig('mineru.model_version', event.target.value)}>
+                    <option value="vlm">vlm - 推荐</option>
+                    <option value="pipeline">pipeline</option>
+                    <option value="MinerU-HTML">MinerU-HTML</option>
+                  </select>
+                </label>
+                <label className="field compact">
+                  <span>输出格式</span>
+                  <select value={getNestedValue(config, 'mineru.output_format', 'markdown')} onChange={(event) => updateConfig('mineru.output_format', event.target.value)}>
+                    <option value="markdown">markdown</option>
+                    <option value="json">json</option>
+                  </select>
+                </label>
+                <label className="field compact">
+                  <span>解析方式</span>
+                  <select value={getNestedValue(config, 'mineru.method', 'auto')} onChange={(event) => updateConfig('mineru.method', event.target.value)}>
+                    <option value="auto">auto - 推荐</option>
+                    <option value="txt">txt</option>
+                    <option value="ocr">ocr</option>
+                  </select>
                 </label>
               </article>
 

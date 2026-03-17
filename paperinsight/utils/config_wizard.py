@@ -12,8 +12,6 @@ from pathlib import Path
 
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
-from rich.text import Text
-
 from paperinsight import __version__
 from paperinsight.utils.config import (
     load_config,
@@ -22,11 +20,38 @@ from paperinsight.utils.config import (
     set_nested_value,
     validate_api_key,
     mask_sensitive_value,
-    SENSITIVE_FIELDS,
 )
 from paperinsight.utils.terminal import create_console
 
 console = create_console()
+
+LONGCAT_DOCS_URL = "https://longcat.chat/platform/docs/zh/"
+MINERU_TOKEN_URL = "https://mineru.net/apiManage/token"
+
+MODEL_OPTIONS = {
+    "openai": [
+        ("gpt-4o", "更聪明，适合复杂提取"),
+        ("gpt-4o-mini", "更省钱，适合日常使用"),
+        ("gpt-4-turbo", "老款高性能模型"),
+        ("gpt-3.5-turbo", "基础够用"),
+    ],
+    "deepseek": [
+        ("deepseek-chat", "通用聊天模型"),
+        ("deepseek-coder", "偏代码和结构化任务"),
+    ],
+    "wenxin": [
+        ("ernie-4.0-8k", "能力更强"),
+        ("ernie-3.5-8k", "更稳"),
+        ("ernie-speed-8k", "更快"),
+    ],
+    "longcat": [
+        ("LongCat-Flash-Chat", "通用版，适合大多数人"),
+        ("LongCat-Flash-Thinking", "更偏深度思考"),
+        ("LongCat-Flash-Thinking-2601", "Thinking 的升级版"),
+        ("LongCat-Flash-Lite", "更轻更省"),
+        ("LongCat-Flash-Omni-2603", "多模态版本"),
+    ],
+}
 
 
 class ConfigWizard:
@@ -56,12 +81,20 @@ class ConfigWizard:
         self._show_welcome()
 
         # 检查是否需要配置
-        if not force and self._is_llm_configured():
-            console.print("\n[green]✓ 检测到已有有效配置[/green]")
+        if not force and self._is_llm_configured() and self._is_mineru_configured():
+            console.print("\n[green]✓ 检测到已有完整配置[/green]")
             if not Confirm.ask("是否重新配置？", default=False):
                 return True
 
-        # Step 1: 选择 LLM 提供商
+        console.print("\n[bold]接下来会严格按 4 步走：[/bold]")
+        console.print("  1. 先检查环境")
+        console.print("  2. 再配置 Longcat")
+        console.print("  3. 再配置 MinerU")
+        console.print("  4. 最后请您确认并保存\n")
+
+        self._show_environment_summary()
+
+        # Step 2: 配置 Longcat
         provider = self._select_llm_provider()
 
         # Step 2: 配置 API Key
@@ -77,10 +110,9 @@ class ConfigWizard:
         """显示欢迎信息"""
         console.print(Panel.fit(
             f"[bold cyan]PaperInsight v{__version__} 配置向导[/bold cyan]\n\n"
-            "本向导将帮助您完成以下配置：\n"
-            "• LLM API（用于智能数据提取）\n"
-            "• MinerU 解析器（用于 PDF 文档解析）\n\n"
-            "[yellow]⚠ 所有敏感信息仅存储在本地，不会上传到服务器[/yellow]",
+            "别担心，我们会一项一项带您配好基础启动。\n"
+            "配好这一次后，命令行和桌面版都会共用同一份配置。\n\n"
+            "[yellow]⚠ 您填写的 Key 和 Token 只保存在本机，不会上传给我们。[/yellow]",
             title="欢迎使用",
             border_style="cyan",
         ))
@@ -100,35 +132,45 @@ class ConfigWizard:
             # OpenAI/DeepSeek 需要 api_key
             return bool(llm_config.get("api_key"))
 
-    def _select_llm_provider(self) -> str:
-        """选择 LLM 提供商"""
-        console.print("\n[bold]Step 1: 选择 LLM 提供商[/bold]")
-        console.print("请选择您要使用的大语言模型服务：\n")
+    def _is_mineru_configured(self) -> bool:
+        mineru_config = self.config.get("mineru", {})
+        if not mineru_config.get("enabled", False):
+            return True
+        if mineru_config.get("mode") == "api":
+            return bool(str(mineru_config.get("token", "")).strip())
+        return True
 
-        providers = {
-            "1": ("longcat", "美团 Longcat (推荐，每日刷新免费token)"),
-            "2": ("deepseek", "DeepSeek (性价比高)"),
-            "3": ("openai", "OpenAI GPT-4"),
-            "4": ("wenxin", "百度文心一言"),
-        }
+    def _show_environment_summary(self) -> None:
+        import sys
 
-        for key, (_, desc) in providers.items():
-            console.print(f"  [cyan]{key}[/cyan]. {desc}")
-
-        current = self.config.get("llm", {}).get("provider", "deepseek")
-        console.print(f"\n当前选择: [yellow]{current}[/yellow]")
-
-        choice = Prompt.ask(
-            "请选择",
-            choices=list(providers.keys()),
-            default="1",
+        console.print("[bold]Step 1: 环境检查[/bold]")
+        console.print(
+            Panel(
+                "\n".join(
+                    [
+                        f"Python 版本：{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                        f"配置文件位置：{self.config_path}",
+                        "这一步只是先帮您看看程序能不能正常跑，不会改动任何配置。",
+                    ]
+                ),
+                border_style="blue",
+            )
         )
 
-        provider = providers[choice][0]
+    def _select_llm_provider(self) -> str:
+        """选择 LLM 提供商"""
+        console.print("\n[bold]Step 2: 配置 Longcat[/bold]")
+        console.print("Longcat 就像这套工具连接 AI 的“通行证服务”。")
+        console.print("如果这里没配好，后面的智能提取就没法正常工作。")
+        console.print(f"[blue underline]{LONGCAT_DOCS_URL}[/blue underline]")
+
+        provider = "longcat"
         set_nested_value(self.config, "llm.provider", provider)
         set_nested_value(self.config, "llm.enabled", True)
+        if not get_nested_value(self.config, "llm.model", ""):
+            set_nested_value(self.config, "llm.model", "LongCat-Flash-Chat")
 
-        console.print(f"[green]✓ 已选择: {provider}[/green]")
+        console.print("[green]✓ 已进入 Longcat 配置[/green]")
         return provider
 
     def _configure_llm_credentials(self, provider: str):
@@ -145,11 +187,12 @@ class ConfigWizard:
         # 显示如何获取 API Key 的说明
         if provider == "longcat":
             console.print(
-                "\n📋 LONGCAT API Key 获取步骤：\n"
-                "   1. 访问 https://longcat.chat/platform/docs/zh/\n"
-                "   2. 注册/登录账号\n"
-                "   3. 进入「API Keys」页面创建密钥\n"
-                "   4. 复制生成的 Key 粘贴到下方\n"
+                "\n[bold]怎么拿到 Longcat API Key？[/bold]\n"
+                f"  1. 打开 [blue underline]{LONGCAT_DOCS_URL}[/blue underline]\n"
+                "  2. 注册或登录账号\n"
+                "  3. 找到 API Keys 页面，新建一个 Key\n"
+                "  4. 把拿到的 Key 复制到下面\n"
+                "\n如果您把 API Key 理解成“开门钥匙”，基本就对了。\n"
             )
         elif provider == "deepseek":
             console.print(
@@ -175,10 +218,7 @@ class ConfigWizard:
             console.print(f"\n当前已配置的 Key: [dim]{masked}[/dim]")
 
         # 获取 API Key
-        api_key = Prompt.ask(
-            f"\n请粘贴您的 {provider.upper()} API Key",
-            password=True,
-        )
+        api_key = Prompt.ask(f"\n请输入 {provider.upper()} API Key", password=True)
 
         if not api_key.strip():
             if current_key:
@@ -202,20 +242,12 @@ class ConfigWizard:
         if current_base_url:
             console.print(f"当前已配置的连接地址: [dim]{current_base_url}[/dim]")
 
-        console.print(
-            "\n[bold]📡 关于\"连接地址\"(API 端点)：[/bold]\n"
-            "\n"
-            "  程序需要连接到 AI 公司的服务器来获取回答。\n"
-            "\n"
-            "  ┌─────────────────────────────────────────────────────────┐\n"
-            "  │  • 默认选项：直接连接官方服务器（推荐新手使用）           │\n"
-            "  │  • 如果您在国内，可能需要填写\"代理\"才能正常使用          │\n"
-            "  │    （代理就像是一个\"中转站\"，帮您绕过网络限制）          │\n"
-            "  │  • 如果您有代理服务，可以在这里填入代理提供的地址        │\n"
-            "  └─────────────────────────────────────────────────────────┘\n"
-        )
+        console.print("\n[bold]关于“连接地址”[/bold]")
+        console.print("不知道这是什么，就先留空。")
+        console.print("只有当别人明确让您填写“中转地址”或“代理地址”时，您再填写。")
+        console.print("它就像一条备用通道，帮程序连到 AI 服务。")
 
-        if Confirm.ask("需要填写代理/中转地址吗？", default=False):
+        if Confirm.ask("您现在要填写连接地址 / 中转地址吗？", default=False):
             if provider == "longcat":
                 default_url = current_base_url or "https://api.longcat.chat/openai"
                 prompt = "请输入代理/中转地址"
@@ -229,7 +261,7 @@ class ConfigWizard:
                 default_url = current_base_url or ""
                 prompt = "请输入代理/中转地址"
 
-            console.print("[dim]不知道填什么？请咨询您的代理服务商[/dim]")
+            console.print("[dim]不知道填什么就先别填，后面也可以再改。[/dim]")
             base_url = Prompt.ask(prompt, default=default_url)
             set_nested_value(self.config, "llm.base_url", base_url.strip())
 
@@ -278,48 +310,17 @@ class ConfigWizard:
 
     def _select_model(self, provider: str):
         """选择模型"""
-        if provider == "openai":
-            models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
-            descriptions = [
-                "GPT-4o - 最新旗舰模型，功能最强大",
-                "GPT-4o-mini - 轻量级模型，性价比高",
-                "GPT-4-turbo - GPT-4 优化版",
-                "GPT-3.5-turbo - 经济实惠够用",
-            ]
-        elif provider == "deepseek":
-            models = ["deepseek-chat", "deepseek-coder"]
-            descriptions = [
-                "DeepSeek Chat - 对话模型（推荐日常使用）",
-                "DeepSeek Coder - 编程专用模型",
-            ]
-        elif provider == "wenxin":
-            models = ["ernie-4.0-8k", "ernie-3.5-8k", "ernie-speed-8k"]
-            descriptions = [
-                "文心一言 4.0 - 最新旗舰模型",
-                "文心一言 3.5 - 稳定版本",
-                "文心一言 Speed - 快速响应",
-            ]
-        elif provider == "longcat":
-            models = [
-                "LongCat-Flash-Chat",
-                "LongCat-Flash-Thinking",
-                "LongCat-Flash-Thinking-2601",
-                "LongCat-Flash-Lite",
-                "LongCat-Flash-Omni-2603",
-            ]
-            descriptions = [
-                "Flash-Chat - 高性能通用对话（推荐）",
-                "Flash-Thinking - 深度思考模型",
-                "Flash-Thinking-2601 - 升级版深度思考",
-                "Flash-Lite - 轻量高效 MoE 模型",
-                "Flash-Omni-2603 - 多模态模型",
-            ]
-        else:
+        options = MODEL_OPTIONS.get(provider)
+        if not options:
             return
 
-        console.print("\n请选择模型：\n")
+        models = [item[0] for item in options]
+        descriptions = [item[1] for item in options]
+
+        console.print("\n[bold]请选择模型[/bold]")
+        console.print("没有唯一正确答案，您按自己的需要选就可以。")
         for i, (model, desc) in enumerate(zip(models, descriptions), 1):
-            console.print(f"  [cyan]{i}[/cyan]. {desc}")
+            console.print(f"  [cyan]{i}[/cyan]. {model} - {desc}")
 
         current_model = get_nested_value(
             self.config,
@@ -337,16 +338,14 @@ class ConfigWizard:
 
         model = models[int(choice) - 1]
         set_nested_value(self.config, f"llm.{provider}.model", model)
+        set_nested_value(self.config, "llm.model", model)
 
     def _configure_mineru(self):
         """配置 MinerU 解析器"""
-        console.print("\n[bold]Step 3: 配置 MinerU 解析器（可选）[/bold]")
-
-        # 检查 MinerU 是否已安装
-        console.print(
-            "MinerU 是一个高性能 PDF 解析工具，可将 PDF 转换为结构化 Markdown。\n"
-            "文档: https://github.com/opendatalab/MinerU\n"
-        )
+        console.print("\n[bold]Step 3: 配置 MinerU[/bold]")
+        console.print("MinerU 可以帮您把 PDF 拆得更细，通常比普通解析更完整。")
+        console.print(f"Token 申请地址： [blue underline]{MINERU_TOKEN_URL}[/blue underline]")
+        console.print("温馨提示：第一次申请可能需要等一会儿，Token 一般只管 90 天。")
 
         if not Confirm.ask("是否启用 MinerU 解析器？", default=True):
             set_nested_value(self.config, "mineru.enabled", False)
@@ -356,15 +355,15 @@ class ConfigWizard:
         set_nested_value(self.config, "mineru.enabled", True)
 
         # 选择模式
-        console.print("\nMinerU 运行模式:")
-        console.print("  [cyan]1[/cyan]. 本地命令行模式（需安装 MinerU）")
-        console.print("  [cyan]2[/cyan]. 云端 API 模式（需配置 Token）")
+        console.print("\nMinerU 运行模式：")
+        console.print("  [cyan]1[/cyan]. 云端 API 模式（推荐，大多数用户选这个）")
+        console.print("  [cyan]2[/cyan]. 本地 CLI 模式（适合会自己装环境的人）")
 
-        current_mode = get_nested_value(self.config, "mineru.mode", "cli")
+        current_mode = get_nested_value(self.config, "mineru.mode", "api")
         console.print(f"\n当前模式: [yellow]{current_mode}[/yellow]")
 
         mode_choice = Prompt.ask("请选择", choices=["1", "2"], default="1")
-        mode = "cli" if mode_choice == "1" else "api"
+        mode = "api" if mode_choice == "1" else "cli"
         set_nested_value(self.config, "mineru.mode", mode)
 
         if mode == "api":
@@ -381,6 +380,46 @@ class ConfigWizard:
 
             if token.strip():
                 set_nested_value(self.config, "mineru.token", token.strip())
+
+        model_versions = {
+            "1": ("vlm", "推荐，适合大多数论文"),
+            "2": ("pipeline", "老方案，适合兼容场景"),
+            "3": ("MinerU-HTML", "偏 HTML 结果"),
+        }
+        console.print("\n接下来请您自己选 MinerU 的处理方案：")
+        for key, (value, desc) in model_versions.items():
+            console.print(f"  [cyan]{key}[/cyan]. {value} - {desc}")
+        selected_model_version = Prompt.ask("模型版本", choices=list(model_versions.keys()), default="1")
+        set_nested_value(self.config, "mineru.model_version", model_versions[selected_model_version][0])
+
+        output_formats = {
+            "1": "markdown",
+            "2": "json",
+        }
+        current_output_format = get_nested_value(self.config, "mineru.output_format", "markdown")
+        default_output_choice = "1" if current_output_format == "markdown" else "2"
+        console.print("\n输出格式就是 MinerU 处理完后更偏向什么结果。")
+        console.print("  [cyan]1[/cyan]. markdown - 更适合后续继续分析")
+        console.print("  [cyan]2[/cyan]. json - 更适合程序读取")
+        output_choice = Prompt.ask("输出格式", choices=["1", "2"], default=default_output_choice)
+        set_nested_value(self.config, "mineru.output_format", output_formats[output_choice])
+
+        methods = {
+            "1": "auto",
+            "2": "txt",
+            "3": "ocr",
+        }
+        current_method = get_nested_value(self.config, "mineru.method", "auto")
+        default_method_choice = next(
+            (key for key, value in methods.items() if value == current_method),
+            "1",
+        )
+        console.print("\n解析方式怎么选？")
+        console.print("  [cyan]1[/cyan]. auto - 让程序自己判断，推荐")
+        console.print("  [cyan]2[/cyan]. txt - 更偏向直接读文字")
+        console.print("  [cyan]3[/cyan]. ocr - 更偏向识别扫描图像")
+        method_choice = Prompt.ask("解析方式", choices=["1", "2", "3"], default=default_method_choice)
+        set_nested_value(self.config, "mineru.method", methods[method_choice])
 
         console.print("[green]✓ MinerU 配置完成[/green]")
 
@@ -409,8 +448,18 @@ class ConfigWizard:
         if mineru_enabled:
             mode = get_nested_value(self.config, "mineru.mode", "cli")
             console.print(f"运行模式: [cyan]{mode}[/cyan]")
+            console.print(
+                f"模型版本: [cyan]{get_nested_value(self.config, 'mineru.model_version', 'vlm')}[/cyan]"
+            )
+            console.print(
+                f"输出格式: [cyan]{get_nested_value(self.config, 'mineru.output_format', 'markdown')}[/cyan]"
+            )
+            console.print(
+                f"解析方式: [cyan]{get_nested_value(self.config, 'mineru.method', 'auto')}[/cyan]"
+            )
 
         console.print("-" * 40)
+        console.print("保存后，命令行和桌面版都会直接共用这份配置。")
 
         if not Confirm.ask("\n确认保存配置？", default=True):
             console.print("[yellow]配置已取消[/yellow]")
