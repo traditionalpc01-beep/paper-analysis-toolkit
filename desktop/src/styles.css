@@ -587,6 +587,55 @@ select {
   margin-top: 8px;
 }
 
+.inline-actions.stacked {
+  margin: 0 0 16px;
+}
+
+.startup-banner {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.startup-banner.ready {
+  background: rgba(195, 225, 219, 0.5);
+}
+
+.startup-banner.limited {
+  background: rgba(230, 199, 168, 0.4);
+}
+
+.startup-banner.blocked {
+  background: rgba(255, 236, 233, 0.9);
+}
+
+.startup-banner strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.startup-banner p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.startup-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.startup-badges span {
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: rgba(63, 52, 41, 0.08);
+  color: var(--ink);
+}
+
 .help-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

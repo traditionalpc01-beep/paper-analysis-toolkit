@@ -102,6 +102,32 @@ function booleanStatusLabel(value, positive = '可用', negative = '不可用') 
   return value ? positive : negative;
 }
 
+function canApplyRecommendedEngine(mode) {
+  return mode === 'bundled' || mode === 'system_python';
+}
+
+function buildRecommendedConfig(config, env) {
+  const recommendedEngine = getNestedValue(env, 'recommendation.engineMode', '');
+  if (!canApplyRecommendedEngine(recommendedEngine)) {
+    return cloneConfig(config);
+  }
+
+  let nextConfig = setNestedValue(config, 'desktop.engine.mode', recommendedEngine);
+  if (recommendedEngine === 'system_python') {
+    const executable = getNestedValue(env, 'checks.systemPython.executable', '').trim();
+    const command = getNestedValue(env, 'checks.systemPython.command', '').trim();
+    const currentPythonPath = getNestedValue(config, 'desktop.engine.python_path', '').trim();
+    if (!currentPythonPath && (executable || command)) {
+      nextConfig = setNestedValue(
+        nextConfig,
+        'desktop.engine.python_path',
+        executable || command
+      );
+    }
+  }
+  return nextConfig;
+}
+
 function hasConfiguredCredentials(config) {
   const provider = getNestedValue(config, 'llm.provider', 'deepseek');
   const llmEnabled = Boolean(getNestedValue(config, 'llm.enabled', true));
@@ -599,6 +625,27 @@ export default function App() {
     }
   }
 
+  async function applyRecommendedSetup() {
+    const nextConfig = buildRecommendedConfig(config, env);
+    const nextMode = getNestedValue(env, 'recommendation.analysisMode', runOptions.mode);
+    const previousConfig = config;
+
+    setConfig(nextConfig);
+    setRunOptions((current) => ({ ...current, mode: nextMode }));
+    setSaveState({ saving: true, message: '', error: '' });
+
+    try {
+      await persistConfig(nextConfig, '已应用推荐启动设置。');
+    } catch (error) {
+      setConfig(previousConfig);
+      setSaveState({ saving: false, message: '', error: error.message || '应用推荐设置失败' });
+    }
+  }
+
+  function useFallbackMode() {
+    setRunOptions((current) => ({ ...current, mode: 'regex' }));
+  }
+
   async function finishOnboarding(configToPersist) {
     setOnboarding((current) => ({ ...current, saving: true, error: '' }));
     try {
@@ -719,6 +766,8 @@ export default function App() {
   const systemPythonReady = Boolean(getNestedValue(env, 'checks.systemPython.available', false)) && Boolean(getNestedValue(env, 'checks.systemPython.hasPaperInsight', false));
   const readinessStatus = getNestedValue(env, 'readiness.status', 'limited');
   const lastKnownOutputDir = job.outputDir || getNestedValue(config, 'desktop.ui.last_output_dir', '');
+  const recommendationApplicable = canApplyRecommendedEngine(recommendedEngine);
+  const currentMatchesRecommendation = engineMode === recommendedEngine && runOptions.mode === recommendedAnalysisMode;
 
   return (
     <>
@@ -799,6 +848,39 @@ export default function App() {
 
           {activeTab === 'analyze' ? (
             <section className="content-grid">
+              <article className="panel-card wide">
+                <div className="panel-head split">
+                  <div>
+                    <span className="panel-kicker">Startup Check</span>
+                    <h3>启动建议</h3>
+                  </div>
+                  <div className="action-row">
+                    <button className="ghost" onClick={useFallbackMode}>切到正则兜底</button>
+                    <button
+                      className="primary"
+                      disabled={!recommendationApplicable || saveState.saving || currentMatchesRecommendation}
+                      onClick={applyRecommendedSetup}
+                    >
+                      {currentMatchesRecommendation ? '已应用推荐' : saveState.saving ? '应用中...' : '一键应用推荐'}
+                    </button>
+                  </div>
+                </div>
+                <div className={`startup-banner ${readinessStatus}`}>
+                  <div>
+                    <strong>{getNestedValue(env, 'readiness.summary', '环境检查已完成。')}</strong>
+                    <p>
+                      推荐引擎：{engineModeLabel(recommendedEngine)}；推荐分析模式：{modeLabel(recommendedAnalysisMode)}。
+                      {getNestedValue(env, 'recommendation.engineReason', '')}
+                    </p>
+                  </div>
+                  <div className="startup-badges">
+                    <span>{booleanStatusLabel(networkAvailable, '联网可用', '联网受限')}</span>
+                    <span>{booleanStatusLabel(systemPythonReady, 'Python 兜底可用', 'Python 兜底待补齐')}</span>
+                    <span>{currentMatchesRecommendation ? '当前配置已对齐推荐' : '当前配置未完全对齐推荐'}</span>
+                  </div>
+                </div>
+              </article>
+
               <article className="panel-card">
                 <div className="panel-head">
                   <div>
@@ -1181,6 +1263,16 @@ export default function App() {
                   <span>推荐：{engineModeLabel(recommendedEngine)}</span>
                   <strong>{getNestedValue(env, 'recommendation.engineReason', '未返回推荐原因。')}</strong>
                   <small>基础联网：{booleanStatusLabel(networkAvailable, '可用', '受限')} · Python 兜底：{booleanStatusLabel(systemPythonReady, '可用', '待补齐')} · 推荐分析模式：{modeLabel(recommendedAnalysisMode)}</small>
+                </div>
+                <div className="inline-actions stacked">
+                  <button
+                    className="ghost small"
+                    disabled={!recommendationApplicable || saveState.saving || currentMatchesRecommendation}
+                    onClick={applyRecommendedSetup}
+                  >
+                    {currentMatchesRecommendation ? '已应用推荐' : '应用推荐启动设置'}
+                  </button>
+                  <button className="ghost small" onClick={useFallbackMode}>仅切到正则兜底</button>
                 </div>
                 <div className="toggle-grid single">
                   <label><input type="radio" name="engine-mode" checked={engineMode === 'bundled'} onChange={() => updateConfig('desktop.engine.mode', 'bundled')} />内置后端（推荐普通用户）</label>
