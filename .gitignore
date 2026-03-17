@@ -36,6 +36,9 @@ desktop/node_modules/
 输出结果/
 desktop/dist/
 desktop/release/
+out_*/
+tmp_*/
+.learnings/
 
 # Cache
 .cache/
