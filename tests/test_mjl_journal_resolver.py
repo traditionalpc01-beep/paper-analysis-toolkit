@@ -41,8 +41,10 @@ def _build_candidate(
     issn: str | None,
     eissn: str | None,
     publisher: str = "Nature Portfolio",
+    search_identifier: str = "search-id-1",
 ) -> dict:
     return {
+        "searchIdentifier": search_identifier,
         "journalProfiles": [
             {
                 "relevance": 10000.0,
@@ -77,6 +79,8 @@ def test_mjl_search_payload_matches_observed_site_request_shape():
     assert payload["filters"][1]["filterName"] == "PRODUCT_CODE"
     assert [item["value"] for item in payload["filters"][1]["values"]] == ["D", "J", "SS", "H", "EX"]
     assert isinstance(payload["searchIdentifier"], str) and payload["searchIdentifier"]
+    assert resolver.session.headers["Authorization"] == "Bearer"
+    assert resolver.session.headers["x-1p-appid"] == "mjl"
 
 
 def test_resolve_prefers_issn_match_and_uses_iso_title():
@@ -101,6 +105,7 @@ def test_resolve_prefers_issn_match_and_uses_iso_title():
     assert resolution.matched_issn == "0028-0836"
     assert resolution.candidate is not None
     assert resolution.candidate.publication_seq_no == "70884J"
+    assert resolution.candidate.search_identifier == "search-id-1"
     assert resolution.candidate.search_url.endswith("?issn=1476-4687")
     assert session.calls[0][0] == MJLJournalResolver.SEARCH_API_URL
 

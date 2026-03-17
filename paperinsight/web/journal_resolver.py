@@ -23,6 +23,7 @@ class MJLJournalCandidate:
     issn: Optional[str]
     eissn: Optional[str]
     publisher_name: Optional[str]
+    search_identifier: Optional[str]
     search_url: str
     profile_url: str
     source_name: str = "mjl"
@@ -72,6 +73,12 @@ class MJLJournalResolver:
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
             ),
         )
+        self.session.headers.setdefault("Accept", "application/json, text/plain, */*")
+        self.session.headers.setdefault("Content-Type", "application/json")
+        self.session.headers.setdefault("Referer", self.SEARCH_RESULTS_URL)
+        self.session.headers.setdefault("Authorization", "Bearer")
+        self.session.headers.setdefault("x-1p-appid", "mjl")
+        self.session.headers.setdefault("Access-Control-Allow-Origin", "*")
 
     def resolve(
         self,
@@ -164,6 +171,7 @@ class MJLJournalResolver:
     ) -> list[MJLJournalCandidate]:
         candidates: list[MJLJournalCandidate] = []
         search_url = self._build_search_results_url(search_value)
+        search_identifier = self._clean_optional_text(response_data.get("searchIdentifier"))
 
         for item in response_data.get("journalProfiles", []):
             journal_profile = item.get("journalProfile", {})
@@ -175,6 +183,7 @@ class MJLJournalResolver:
                     issn=normalize_issn(journal_profile.get("issn")),
                     eissn=normalize_issn(journal_profile.get("eissn")),
                     publisher_name=self._clean_optional_text(journal_profile.get("publisherName")),
+                    search_identifier=search_identifier,
                     search_url=search_url,
                     profile_url=self.JOURNAL_PROFILE_URL,
                 )
