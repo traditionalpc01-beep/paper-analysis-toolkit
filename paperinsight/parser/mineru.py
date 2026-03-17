@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 import json
+import hashlib
 import re
 import shutil
 import subprocess
@@ -413,7 +414,7 @@ class MinerUParser(BaseParser):
         """构建单个文件的 API 参数。"""
         file_item: Dict[str, Any] = {
             "name": file_path.name,
-            "data_id": file_path.stem,
+            "data_id": self._build_data_id(file_path),
         }
         if self.method == "ocr":
             file_item["is_ocr"] = True
@@ -424,6 +425,20 @@ class MinerUParser(BaseParser):
         if page_ranges:
             file_item["page_ranges"] = page_ranges
         return file_item
+
+    def _build_data_id(self, file_path: Path) -> str:
+        """构建符合 MinerU 长度限制的 data_id。"""
+        stem = file_path.stem.strip() or "paper"
+        normalized = re.sub(r"[^0-9A-Za-z._-]+", "-", stem).strip("-._")
+        if not normalized:
+            normalized = "paper"
+
+        digest = hashlib.md5(str(file_path).encode("utf-8")).hexdigest()[:12]
+        max_length = 128
+        reserved = len(digest) + 1
+        if len(normalized) > max_length - reserved:
+            normalized = normalized[: max_length - reserved]
+        return f"{normalized}-{digest}"
 
     def _poll_batch_extract_results(
         self,

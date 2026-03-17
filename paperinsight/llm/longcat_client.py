@@ -37,6 +37,44 @@ class LongcatClient(BaseLLM):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._client = None
+
+    def _build_openai_kwargs(
+        self,
+        max_tokens: Optional[int],
+        temperature: float,
+        stream: bool = False,
+        **kwargs,
+    ) -> dict:
+        payload = {
+            "model": self.model,
+            "messages": kwargs.pop("messages", None) or [],
+            "temperature": temperature,
+            "stream": stream,
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        payload.update({key: value for key, value in kwargs.items() if value is not None})
+        return payload
+
+    def _create_completion(
+        self,
+        messages: list[dict],
+        max_tokens: Optional[int],
+        temperature: float,
+        stream: bool = False,
+        **kwargs,
+    ):
+        client = self._get_client()
+        if client is None:
+            raise RuntimeError("OpenAI 兼容客户端不可用")
+        payload = self._build_openai_kwargs(
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=stream,
+            messages=messages,
+            **kwargs,
+        )
+        return client.chat.completions.create(**payload)
     
     def _get_client(self):
         """获取 OpenAI 兼容客户端"""
@@ -117,8 +155,7 @@ class LongcatClient(BaseLLM):
         
         try:
             if client is not None:
-                response = client.chat.completions.create(
-                    model=self.model,
+                response = self._create_completion(
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=max_tokens,
                     temperature=temperature,
@@ -155,8 +192,7 @@ class LongcatClient(BaseLLM):
         
         try:
             if client is not None:
-                response = client.chat.completions.create(
-                    model=self.model,
+                response = self._create_completion(
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=max_tokens,
                     temperature=temperature,
@@ -212,8 +248,7 @@ class LongcatClient(BaseLLM):
             content = ""
             if client is not None:
                 try:
-                    response = client.chat.completions.create(
-                        model=self.model,
+                    response = self._create_completion(
                         messages=[{"role": "user", "content": prompt}],
                         max_tokens=max_tokens,
                         temperature=temperature,
@@ -221,8 +256,7 @@ class LongcatClient(BaseLLM):
                         **kwargs,
                     )
                 except Exception:
-                    response = client.chat.completions.create(
-                        model=self.model,
+                    response = self._create_completion(
                         messages=[{"role": "user", "content": prompt}],
                         max_tokens=max_tokens,
                         temperature=temperature,
@@ -262,10 +296,10 @@ class LongcatClient(BaseLLM):
         try:
             client = self._get_client()
             if client is not None:
-                client.chat.completions.create(
-                    model=self.model,
+                self._create_completion(
                     messages=[{"role": "user", "content": "test"}],
                     max_tokens=5,
+                    temperature=0.1,
                 )
             else:
                 payload = self._build_payload("test", max_tokens=5, temperature=0.1)
