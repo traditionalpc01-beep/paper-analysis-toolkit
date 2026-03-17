@@ -255,13 +255,25 @@ class DataExtractor:
             devices_data = response.get("devices", [])
             data_source_data = response.get("data_source", {})
             optimization_data = response.get("optimization", {})
+            raw_journal_title = paper_info_data.get("raw_journal_title")
+            matched_journal_title = paper_info_data.get("matched_journal_title")
 
             # 构建 PaperInfo
             paper_info = PaperInfo(
                 title=paper_info_data.get("title"),
                 authors=paper_info_data.get("authors"),
-                journal_name=paper_info_data.get("journal_name"),
+                journal_name=paper_info_data.get("journal_name") or matched_journal_title or raw_journal_title,
+                raw_journal_title=raw_journal_title,
+                raw_issn=paper_info_data.get("raw_issn"),
+                raw_eissn=paper_info_data.get("raw_eissn"),
+                matched_journal_title=matched_journal_title,
+                matched_issn=paper_info_data.get("matched_issn"),
+                match_method=paper_info_data.get("match_method"),
+                journal_profile_url=paper_info_data.get("journal_profile_url"),
                 impact_factor=paper_info_data.get("impact_factor"),
+                impact_factor_year=paper_info_data.get("impact_factor_year"),
+                impact_factor_source=paper_info_data.get("impact_factor_source"),
+                impact_factor_status=paper_info_data.get("impact_factor_status"),
                 year=paper_info_data.get("year"),
                 optimization_strategy=paper_info_data.get("optimization_strategy"),
                 best_eqe=paper_info_data.get("best_eqe"),
@@ -329,10 +341,14 @@ class DataExtractor:
         """使用正则表达式提取（兜底方案）"""
         try:
             # 提取基本信息
+            raw_journal_title, raw_issn, raw_eissn = self._extract_raw_journal_metadata(text, parse_result)
             paper_info = PaperInfo(
                 title=self._extract_title(text, parse_result),
                 authors=self._extract_authors(text, parse_result),
-                journal_name=self._extract_journal_name(text),
+                journal_name=raw_journal_title,
+                raw_journal_title=raw_journal_title,
+                raw_issn=raw_issn,
+                raw_eissn=raw_eissn,
                 impact_factor=self._extract_impact_factor(text),
                 year=self._extract_year(text),
                 research_type=self._detect_research_type(text),
@@ -411,6 +427,89 @@ class DataExtractor:
             unique_names = list(dict.fromkeys(matches))[:10]
             return ", ".join(unique_names)
 
+        return None
+
+    def _extract_raw_journal_metadata(
+        self,
+        text: str,
+        parse_result: Optional[ParseResult],
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """提取期刊原始标题、ISSN 和 eISSN。"""
+        metadata = parse_result.metadata if parse_result else {}
+        raw_journal_title = self._first_non_empty(
+            self._coerce_metadata_value(metadata.get("journal_name")),
+            self._coerce_metadata_value(metadata.get("journal")),
+            self._coerce_metadata_value(metadata.get("publication_name")),
+            self._coerce_metadata_value(metadata.get("publication_title")),
+            self._coerce_metadata_value(metadata.get("container_title")),
+            self._extract_journal_name(text),
+        )
+
+        raw_issn = self._first_non_empty(
+            self._coerce_metadata_value(metadata.get("issn")),
+            self._coerce_metadata_value(metadata.get("print_issn")),
+            self._coerce_metadata_value(metadata.get("pissn")),
+            self._coerce_metadata_value(metadata.get("issn_print")),
+        )
+        raw_eissn = self._first_non_empty(
+            self._coerce_metadata_value(metadata.get("eissn")),
+            self._coerce_metadata_value(metadata.get("electronic_issn")),
+            self._coerce_metadata_value(metadata.get("online_issn")),
+            self._coerce_metadata_value(metadata.get("issn_electronic")),
+        )
+
+        text_issn, text_eissn = self._extract_issn_from_text(text)
+        return raw_journal_title, raw_issn or text_issn, raw_eissn or text_eissn
+
+    def _extract_issn_from_text(self, text: str) -> tuple[Optional[str], Optional[str]]:
+        """从文章前部文本提取 ISSN/eISSN。"""
+        head_text = text[:5000]
+        issn_pattern = r"(\d{4}-?\d{3}[\dXx])"
+
+        eissn_match = re.search(
+            rf"\b(?:e-?issn|electronic\s+issn|online\s+issn)\b[^0-9A-Za-z]{{0,10}}{issn_pattern}",
+            head_text,
+            re.IGNORECASE,
+        )
+        issn_match = re.search(
+            rf"\b(?:p-?issn|print\s+issn|issn\s*\(print\)|issn)\b[^0-9A-Za-z]{{0,10}}{issn_pattern}",
+            head_text,
+            re.IGNORECASE,
+        )
+
+        generic_matches = re.findall(r"\b\d{4}-?\d{3}[\dXx]\b", head_text)
+        raw_issn = issn_match.group(1) if issn_match else None
+        raw_eissn = eissn_match.group(1) if eissn_match else None
+
+        if not raw_issn and generic_matches:
+            raw_issn = generic_matches[0]
+        if not raw_eissn and len(generic_matches) > 1:
+            for candidate in generic_matches:
+                if candidate != raw_issn:
+                    raw_eissn = candidate
+                    break
+
+        return raw_issn, raw_eissn
+
+    @staticmethod
+    def _coerce_metadata_value(value: Any) -> Optional[str]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, str):
+            return value.strip() or None
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                coerced = DataExtractor._coerce_metadata_value(item)
+                if coerced:
+                    return coerced
+            return None
+        return str(value).strip() or None
+
+    @staticmethod
+    def _first_non_empty(*values: Optional[str]) -> Optional[str]:
+        for value in values:
+            if value not in (None, ""):
+                return value
         return None
 
     def _extract_journal_name(self, text: str) -> Optional[str]:

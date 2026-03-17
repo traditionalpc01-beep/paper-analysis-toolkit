@@ -7,6 +7,7 @@ from paperinsight.cli import app
 from paperinsight.core.extractor import DataExtractor
 from paperinsight.core.pipeline import AnalysisPipeline
 from paperinsight.models.schemas import PaperData, PaperInfo
+from paperinsight.parser.base import ParseResult
 from paperinsight.web.impact_factor_search import ImpactFactorSearcher
 
 
@@ -185,3 +186,44 @@ def test_regex_device_inference_can_extract_multiple_devices():
     assert len(result.data.devices) >= 2
     assert any(device.eqe == "18.90%" for device in result.data.devices if device.eqe)
     assert result.data.paper_info.best_eqe == "18.90%"
+
+
+def test_regex_extractor_uses_parse_metadata_for_raw_journal_fields():
+    text = "This paper studies emissive materials."
+    parse_result = ParseResult(
+        markdown=text,
+        raw_text=text,
+        metadata={
+            "journal": "Nature Materials",
+            "issn": "1476-1122",
+            "eissn": "1476-4660",
+        },
+    )
+
+    extractor = DataExtractor(use_llm=False)
+    result = extractor.extract(markdown_text=text, cleaned_text=text, parse_result=parse_result)
+
+    assert result.success is True
+    assert result.data.paper_info.journal_name == "Nature Materials"
+    assert result.data.paper_info.raw_journal_title == "Nature Materials"
+    assert result.data.paper_info.raw_issn == "1476-1122"
+    assert result.data.paper_info.raw_eissn == "1476-4660"
+
+
+def test_regex_extractor_falls_back_to_front_matter_issn_patterns():
+    text = """
+    Nature Communications
+    Print ISSN 2041-1723
+    Online ISSN 2041-1723
+
+    The device achieved an EQE of 22.5%.
+    """
+
+    extractor = DataExtractor(use_llm=False)
+    result = extractor.extract(markdown_text=text, cleaned_text=text)
+
+    assert result.success is True
+    assert result.data.paper_info.journal_name == "Nature Communications"
+    assert result.data.paper_info.raw_journal_title == "Nature Communications"
+    assert result.data.paper_info.raw_issn == "2041-1723"
+    assert result.data.paper_info.raw_eissn == "2041-1723"

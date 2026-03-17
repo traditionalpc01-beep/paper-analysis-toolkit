@@ -142,10 +142,60 @@ class PaperInfo(BaseModel):
         default=None,
         description="期刊名称"
     )
-    
+
+    raw_journal_title: Optional[str] = Field(
+        default=None,
+        description="期刊原始标题"
+    )
+
+    raw_issn: Optional[str] = Field(
+        default=None,
+        description="原始 print ISSN"
+    )
+
+    raw_eissn: Optional[str] = Field(
+        default=None,
+        description="原始 electronic ISSN"
+    )
+
+    matched_journal_title: Optional[str] = Field(
+        default=None,
+        description="期刊匹配后的标准标题"
+    )
+
+    matched_issn: Optional[str] = Field(
+        default=None,
+        description="期刊匹配后的标准 ISSN"
+    )
+
+    match_method: Optional[str] = Field(
+        default=None,
+        description="期刊匹配方式"
+    )
+
+    journal_profile_url: Optional[str] = Field(
+        default=None,
+        description="期刊主页 URL"
+    )
+
     impact_factor: Optional[float] = Field(
         default=None,
         description="影响因子"
+    )
+
+    impact_factor_year: Optional[int] = Field(
+        default=None,
+        description="影响因子年份"
+    )
+
+    impact_factor_source: Optional[str] = Field(
+        default=None,
+        description="影响因子来源"
+    )
+
+    impact_factor_status: Optional[str] = Field(
+        default=None,
+        description="影响因子获取状态"
     )
     
     year: Optional[int] = Field(
@@ -235,11 +285,27 @@ class PaperData(BaseModel):
                 label = f"[{device.device_label}] " if device.device_label else ""
                 lifetimes.append(f"{label}{device.lifetime}")
         
+        journal_display_name = (
+            self.paper_info.journal_name
+            or self.paper_info.matched_journal_title
+            or self.paper_info.raw_journal_title
+        )
+
         return {
             "标题": self.paper_info.title,
             "作者": self.paper_info.authors,
-            "期刊": self.paper_info.journal_name,
+            "期刊": journal_display_name,
+            "原始期刊标题": self.paper_info.raw_journal_title,
+            "原始ISSN": self.paper_info.raw_issn,
+            "原始eISSN": self.paper_info.raw_eissn,
+            "匹配期刊": self.paper_info.matched_journal_title,
+            "匹配ISSN": self.paper_info.matched_issn,
+            "匹配方式": self.paper_info.match_method,
+            "期刊主页": self.paper_info.journal_profile_url,
             "影响因子": self.paper_info.impact_factor,
+            "影响因子年份": self.paper_info.impact_factor_year,
+            "影响因子来源": self.paper_info.impact_factor_source,
+            "影响因子状态": self.paper_info.impact_factor_status,
             "年份": self.paper_info.year,
             "研究类型": self.paper_info.research_type,
             "发光材料类型": self.paper_info.emitter_type,
@@ -355,7 +421,17 @@ PAPER_DATA_JSON_SCHEMA = {
                 "title": {"type": ["string", "null"]},
                 "authors": {"type": ["string", "null"]},
                 "journal_name": {"type": ["string", "null"]},
+                "raw_journal_title": {"type": ["string", "null"]},
+                "raw_issn": {"type": ["string", "null"]},
+                "raw_eissn": {"type": ["string", "null"]},
+                "matched_journal_title": {"type": ["string", "null"]},
+                "matched_issn": {"type": ["string", "null"]},
+                "match_method": {"type": ["string", "null"]},
+                "journal_profile_url": {"type": ["string", "null"]},
                 "impact_factor": {"type": ["number", "null"]},
+                "impact_factor_year": {"type": ["integer", "null"]},
+                "impact_factor_source": {"type": ["string", "null"]},
+                "impact_factor_status": {"type": ["string", "null"]},
                 "year": {"type": ["integer", "null"]},
                 "optimization_strategy": {"type": ["string", "null"]},
                 "best_eqe": {"type": ["string", "null"]},
