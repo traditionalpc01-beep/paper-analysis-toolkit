@@ -10,7 +10,7 @@ PaperInsight CLI - 智能科研论文分析工具
   - 缓存机制（避免重复解析）
 """
 
-__version__ = "3.0.0"
+__version__ = "3.0.1"
 __author__ = "WorkBuddy AI Assistant"
 
 __all__ = ["app", "__version__"]

@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Optional
 
 from paperinsight.utils.config import load_config
+from paperinsight.utils.terminal import create_console
 
 
 class EnvironmentStatus(Enum):
@@ -264,10 +265,9 @@ class EnvironmentChecker:
     
     def print_report(self):
         """打印检查报告"""
-        from rich.console import Console
         from rich.table import Table
-        
-        console = Console()
+
+        console = create_console()
         
         console.print("\n[bold]PaperInsight 环境检测报告[/bold]\n")
         

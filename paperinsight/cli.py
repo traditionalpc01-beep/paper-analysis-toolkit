@@ -44,7 +44,6 @@ from pathlib import Path
 from typing import Optional
 
 import typer
-from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -55,6 +54,7 @@ from paperinsight import __version__
 from paperinsight.core.pipeline import AnalysisPipeline
 from paperinsight.utils.config import DEFAULT_CONFIG, load_config, save_config
 from paperinsight.utils.config_wizard import ConfigWizard
+from paperinsight.utils.terminal import create_console
 
 app = typer.Typer(
     name="paperinsight",
@@ -62,7 +62,7 @@ app = typer.Typer(
     add_completion=False,
 )
 
-console = Console()
+console = create_console()
 
 
 # ============================================================================

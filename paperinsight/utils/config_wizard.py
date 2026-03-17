@@ -10,11 +10,11 @@ from __future__ import annotations
 from typing import Optional
 from pathlib import Path
 
-from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich.text import Text
 
+from paperinsight import __version__
 from paperinsight.utils.config import (
     load_config,
     save_config,
@@ -24,8 +24,9 @@ from paperinsight.utils.config import (
     mask_sensitive_value,
     SENSITIVE_FIELDS,
 )
+from paperinsight.utils.terminal import create_console
 
-console = Console()
+console = create_console()
 
 
 class ConfigWizard:
@@ -75,7 +76,7 @@ class ConfigWizard:
     def _show_welcome(self):
         """显示欢迎信息"""
         console.print(Panel.fit(
-            "[bold cyan]PaperInsight v3.0 配置向导[/bold cyan]\n\n"
+            f"[bold cyan]PaperInsight v{__version__} 配置向导[/bold cyan]\n\n"
             "本向导将帮助您完成以下配置：\n"
             "• LLM API（用于智能数据提取）\n"
             "• MinerU 解析器（用于 PDF 文档解析）\n\n"

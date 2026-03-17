@@ -2,7 +2,7 @@
 
 智能科研论文分析工具 v3.0 - 自动提取 PDF 论文关键信息、补全影响因子并生成排序报告。
 
-当前版本：`3.0.0`
+当前版本：`3.0.1`
 
 ---
 
@@ -79,7 +79,7 @@ pip install openai
 - 示例发布命令：
 
 ```bash
-git tag v3.0.0
+git tag v3.0.1
 git push origin main --tags
 ```
 
@@ -160,8 +160,8 @@ npm run dist:win
 git push origin main
 
 # 3) 验证通过后打正式标签
-git tag v3.0.0
-git push origin v3.0.0
+git tag v3.0.1
+git push origin v3.0.1
 ```
 
 发布后可从两个入口获取安装包：
