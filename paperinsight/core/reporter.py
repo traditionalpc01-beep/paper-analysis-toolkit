@@ -202,7 +202,7 @@ class ReportGenerator:
         
         # 保存
         wb.save(output_path)
-        print(f"[报告] Excel 报告已保存: {output_path}")
+        print(f"[Report] Excel report saved: {output_path}")
         
         return output_path
     
@@ -286,7 +286,7 @@ class ReportGenerator:
         with output_path.open("w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
         
-        print(f"[报告] JSON 报告已保存: {output_path}")
+        print(f"[Report] JSON report saved: {output_path}")
         
         return output_path
     
@@ -315,22 +315,22 @@ class ReportGenerator:
         
         with output_path.open("w", encoding="utf-8") as f:
             f.write("=" * 70 + "\n")
-            f.write("PaperInsight 错误日志\n")
-            f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"错误总数: {len(errors)}\n")
+            f.write("PaperInsight Error Log\n")
+            f.write(f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Total errors: {len(errors)}\n")
             f.write("=" * 70 + "\n\n")
             
             for idx, error in enumerate(errors, 1):
-                f.write(f"[错误 {idx}]\n")
-                f.write(f"时间: {error.get('timestamp', 'N/A')}\n")
-                f.write(f"文件: {error.get('pdf_name', 'N/A')}\n")
-                f.write(f"类型: {error.get('error_type', 'N/A')}\n")
-                f.write(f"信息: {error.get('error_message', 'N/A')}\n")
+                f.write(f"[Error {idx}]\n")
+                f.write(f"Time: {error.get('timestamp', 'N/A')}\n")
+                f.write(f"File: {error.get('pdf_name', 'N/A')}\n")
+                f.write(f"Type: {error.get('error_type', 'N/A')}\n")
+                f.write(f"Message: {error.get('error_message', 'N/A')}\n")
                 if error.get('context'):
-                    f.write(f"上下文: {error['context']}\n")
+                    f.write(f"Context: {error['context']}\n")
                 f.write("-" * 70 + "\n\n")
         
-        print(f"[错误日志] 已保存: {output_path}")
+        print(f"[ErrorLog] saved: {output_path}")
         
         return output_path
 
@@ -345,7 +345,7 @@ class ReportGenerator:
 
     def _build_default_filename(self, extension: str) -> str:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_name = f"论文分析报告_{timestamp}"
+        base_name = f"paperinsight_report_{timestamp}"
         return f"{base_name}.{extension}"
 
     def _build_unique_output_path(self, output_filename: str) -> Path:

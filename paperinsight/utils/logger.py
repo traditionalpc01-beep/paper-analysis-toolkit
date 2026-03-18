@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Optional, Union
 from datetime import datetime
 
+from paperinsight.utils.terminal import SafeOutputStream
+
 
 def setup_logger(
     name: str = "paperinsight",
@@ -43,7 +45,7 @@ def setup_logger(
     formatter = logging.Formatter(format_string, datefmt="%Y-%m-%d %H:%M:%S")
     
     # 控制台处理器
-    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler = logging.StreamHandler(SafeOutputStream(sys.stdout))
     console_handler.setLevel(level)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
@@ -58,6 +60,7 @@ def setup_logger(
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
     
+    logger.propagate = False
     return logger
 
 

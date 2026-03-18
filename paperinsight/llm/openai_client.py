@@ -49,7 +49,7 @@ class OpenAIClient(BaseLLM):
                 self._client = OpenAI(**client_kwargs)
             
             except ImportError as e:
-                raise ImportError("未安装 openai 库,请运行: pip install openai") from e
+                raise ImportError("The `openai` package is not installed. Run: pip install openai") from e
         
         return self._client
     
@@ -85,7 +85,7 @@ class OpenAIClient(BaseLLM):
             return response.choices[0].message.content
         
         except Exception as e:
-            raise RuntimeError(f"OpenAI API 调用失败: {e}") from e
+            raise RuntimeError(f"OpenAI API call failed: {e}") from e
     
     def generate_json(
         self,
@@ -159,12 +159,12 @@ class OpenAIClient(BaseLLM):
                 if json_match:
                     return json.loads(json_match.group())
 
-                raise ValueError(f"无法从响应中提取 JSON: {content[:200]}")
+                raise ValueError(f"Could not extract JSON from response: {content[:200]}")
 
         except json.JSONDecodeError as e:
-            raise ValueError(f"JSON 解析失败: {e}") from e
+            raise ValueError(f"JSON parse failed: {e}") from e
         except Exception as e:
-            raise RuntimeError(f"OpenAI API 调用失败: {e}") from e
+            raise RuntimeError(f"OpenAI API call failed: {e}") from e
     
     def is_available(self) -> bool:
         """检查 API 是否可用"""

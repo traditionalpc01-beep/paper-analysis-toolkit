@@ -10,6 +10,13 @@ PaperInsight CLI - 智能科研论文分析工具
   - 缓存机制（避免重复解析）
 """
 
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message=r".*urllib3 .* doesn't match a supported version!.*",
+)
+
 __version__ = "3.0.1"
 __author__ = "WorkBuddy AI Assistant"
 

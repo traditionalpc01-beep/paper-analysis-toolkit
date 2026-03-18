@@ -30,8 +30,8 @@ const supportLinks = [
   { label: '提交 Issue', url: 'https://github.com/traditionalpc01-beep/paper-analysis-toolkit/issues' },
   { label: 'Releases 下载页', url: 'https://github.com/traditionalpc01-beep/paper-analysis-toolkit/releases' },
   { label: 'GitHub Actions', url: 'https://github.com/traditionalpc01-beep/paper-analysis-toolkit/actions' },
-  { label: 'OpenAI Platform', url: 'https://platform.openai.com/' },
-  { label: 'DeepSeek Platform', url: 'https://platform.deepseek.com/' },
+  { label: 'OpenAI 平台', url: 'https://platform.openai.com/' },
+  { label: 'DeepSeek 平台', url: 'https://platform.deepseek.com/' },
   { label: 'Longcat 文档', url: 'https://longcat.chat/platform/docs/zh/' },
   { label: 'MinerU Token 申请页', url: 'https://mineru.net/apiManage/token' },
   { label: 'MinerU 官网', url: 'https://mineru.net/' }
@@ -167,6 +167,16 @@ function buildRecommendedOnboardingConfig(config, env) {
   return nextConfig;
 }
 
+function buildBasicOnboardingConfig(config, env) {
+  let nextConfig = buildRecommendedConfig(config, env);
+  nextConfig = setNestedValue(nextConfig, 'desktop.engine.mode', 'bundled');
+  nextConfig = setNestedValue(nextConfig, 'llm.enabled', false);
+  nextConfig = setNestedValue(nextConfig, 'mineru.enabled', false);
+  nextConfig = setNestedValue(nextConfig, 'web_search.enabled', false);
+  nextConfig = setNestedValue(nextConfig, 'output.format', ['excel']);
+  return nextConfig;
+}
+
 function buildEnvironmentAlerts(env, config, runOptions) {
   const alerts = [];
   const readinessStatus = getNestedValue(env, 'readiness.status', 'limited');
@@ -258,7 +268,7 @@ function hasConfiguredCredentials(config) {
 }
 
 function validateWizardStep(step, draftConfig) {
-  if (step === 1) {
+  if (step === 1 && Boolean(getNestedValue(draftConfig, 'llm.enabled', true))) {
     if (!getNestedValue(draftConfig, 'llm.api_key', '').trim()) {
       return '请先填写 Longcat API Key。';
     }
@@ -635,7 +645,9 @@ function OnboardingModal({
   }
 
   const provider = 'longcat';
-  const llmEnabled = true;
+  const llmEnabled = Boolean(getNestedValue(draftConfig, 'llm.enabled', true));
+  const mineruEnabled = Boolean(getNestedValue(draftConfig, 'mineru.enabled', true));
+  const mineruMode = getNestedValue(draftConfig, 'mineru.mode', 'api');
   const engineMode = getNestedValue(draftConfig, 'desktop.engine.mode', 'bundled');
   const currentStep = wizardSteps[step];
   const isLastStep = step === wizardSteps.length - 1;
@@ -647,9 +659,13 @@ function OnboardingModal({
   const wizardIntro = step === 0
     ? '别担心，先让我帮您看看这台电脑现在能不能直接用。'
     : step === 1
-      ? '这一步只需要把 Longcat 的钥匙填进去，不懂的项可以先留空。'
+      ? llmEnabled
+        ? '这一步只在您想启用智能提取时才需要填写，不急着用可以先关闭。'
+        : '您当前选择的是离线基础版，这一步可以直接跳过 API 配置。'
       : step === 2
-        ? '这一步是给 PDF 拆解助手做准备，大多数人优先用 API 模式就行。'
+        ? mineruEnabled
+          ? '这一步是给 PDF 拆解助手做准备，大多数人优先用 API 模式就行。'
+          : '您当前先不开启 MinerU，会走更基础但更省心的流程。'
         : '最后再一起确认一遍，确认没问题就保存。';
   const wizardChecklist = [
     `现在在第 ${step + 1} 步，共 ${wizardSteps.length} 步`,
@@ -664,7 +680,7 @@ function OnboardingModal({
           <div>
             <span className="eyebrow">首次启动向导</span>
             <h2>{currentStep.title}</h2>
-            <p>我们会按固定顺序带您完成：先检查环境，再配 Longcat，再配 MinerU，最后确认保存。配好后命令行和桌面版都能直接用。</p>
+            <p>您可以先用“离线基础版”直接上手，也可以补齐 Longcat / MinerU 做联网增强。配好后命令行和桌面版都会共用这份配置。</p>
           </div>
         </div>
 
@@ -711,8 +727,11 @@ function OnboardingModal({
                 </div>
               </section>
               <section className="wizard-info-block full recommendation">
-                <h3>下一步要做什么</h3>
-                <p>下一步我们只配置 Longcat 的 3 件事：API Key、连接地址、模型。每一项都由您自己判断，我们不会替您做决定。</p>
+                <h3>推荐先这样开始</h3>
+                <p>如果您只是想先跑通软件，建议先使用“离线基础版”：不开启 Longcat、不启用 MinerU，先把论文目录选好直接分析。后面再补 API 也不迟。</p>
+                <div className="inline-actions">
+                  <button className="ghost small" onClick={() => onSkip(buildBasicOnboardingConfig(draftConfig, env))}>先用离线基础版</button>
+                </div>
               </section>
             </div>
           ) : null}
@@ -720,30 +739,43 @@ function OnboardingModal({
           {step === 1 ? (
             <div className="wizard-form-grid">
               <section className="wizard-choice-card wide-field">
-                <h3>Longcat 是什么</h3>
-                <p className="wizard-hint">把它理解成软件连上 AI 的钥匙服务就行。没有 API Key，就没法做智能提取。</p>
+                <h3>Longcat 智能提取</h3>
+                <p className="wizard-hint">如果您想让软件走智能 API 提取，就打开它并填写 Key；如果只想先能用，直接关闭也可以。</p>
                 <div className="inline-actions">
                   <button className="ghost small" onClick={() => window.paperInsight.openExternal('https://longcat.chat/platform/docs/zh/')}>打开 Longcat 文档</button>
+                  <button className="ghost small" onClick={() => setDraftValue('llm.enabled', !llmEnabled)}>{llmEnabled ? '先关闭 Longcat' : '启用 Longcat'}</button>
                 </div>
               </section>
-              <label className="field compact wide-field">
-                <span>Longcat API Key</span>
-                <input type="password" value={getNestedValue(draftConfig, 'llm.api_key', '')} onChange={(event) => setDraftValue('llm.api_key', event.target.value)} placeholder="请粘贴您的 Longcat API Key" />
-              </label>
-              <label className="field compact wide-field">
-                <span>连接地址 / 中转地址</span>
-                <input value={getNestedValue(draftConfig, 'llm.base_url', '')} onChange={(event) => setDraftValue('llm.base_url', event.target.value)} placeholder="不知道就先留空，需要中转时再填" />
-              </label>
-              <label className="field compact wide-field">
-                <span>模型名称</span>
-                <select value={getNestedValue(draftConfig, 'llm.model', 'LongCat-Flash-Chat')} onChange={(event) => setDraftValue('llm.model', event.target.value)}>
-                  <option value="LongCat-Flash-Chat">LongCat-Flash-Chat - 通用版，适合大多数人</option>
-                  <option value="LongCat-Flash-Thinking">LongCat-Flash-Thinking - 更偏深度思考</option>
-                  <option value="LongCat-Flash-Thinking-2601">LongCat-Flash-Thinking-2601 - Thinking 的升级版</option>
-                  <option value="LongCat-Flash-Lite">LongCat-Flash-Lite - 更轻更省</option>
-                  <option value="LongCat-Flash-Omni-2603">LongCat-Flash-Omni-2603 - 多模态版本</option>
-                </select>
-              </label>
+              <div className="toggle-grid single wizard-toggle wide-field">
+                <label><input type="checkbox" checked={llmEnabled} onChange={(event) => setDraftValue('llm.enabled', event.target.checked)} />启用 Longcat 智能提取</label>
+              </div>
+              {llmEnabled ? (
+                <>
+                  <label className="field compact wide-field">
+                    <span>Longcat API Key</span>
+                    <input type="password" value={getNestedValue(draftConfig, 'llm.api_key', '')} onChange={(event) => setDraftValue('llm.api_key', event.target.value)} placeholder="请粘贴您的 Longcat API Key" />
+                  </label>
+                  <label className="field compact wide-field">
+                    <span>连接地址 / 中转地址</span>
+                    <input value={getNestedValue(draftConfig, 'llm.base_url', '')} onChange={(event) => setDraftValue('llm.base_url', event.target.value)} placeholder="不知道就先留空，需要中转时再填" />
+                  </label>
+                  <label className="field compact wide-field">
+                    <span>模型名称</span>
+                    <select value={getNestedValue(draftConfig, 'llm.model', 'LongCat-Flash-Chat')} onChange={(event) => setDraftValue('llm.model', event.target.value)}>
+                      <option value="LongCat-Flash-Chat">LongCat-Flash-Chat - 通用版，适合大多数人</option>
+                      <option value="LongCat-Flash-Thinking">LongCat-Flash-Thinking - 更偏深度思考</option>
+                      <option value="LongCat-Flash-Thinking-2601">LongCat-Flash-Thinking-2601 - Thinking 的升级版</option>
+                      <option value="LongCat-Flash-Lite">LongCat-Flash-Lite - 更轻更省</option>
+                      <option value="LongCat-Flash-Omni-2603">LongCat-Flash-Omni-2603 - 多模态版本</option>
+                    </select>
+                  </label>
+                </>
+              ) : (
+                <section className="wizard-choice-card wide-field">
+                  <h3>已切换为离线基础版</h3>
+                  <p className="wizard-hint">当前不会要求您填写 API Key。之后如果需要更完整的智能提取，再回来开启 Longcat 即可。</p>
+                </section>
+              )}
             </div>
           ) : null}
 
@@ -754,6 +786,7 @@ function OnboardingModal({
                 <p className="wizard-hint">把它理解成“更会拆 PDF 的帮手”就行。大多数用户建议优先用 API 模式。</p>
                 <div className="inline-actions">
                   <button className="ghost small" onClick={() => window.paperInsight.openExternal('https://mineru.net/apiManage/token')}>打开 MinerU Token 申请页</button>
+                  <button className="ghost small" onClick={() => setDraftValue('mineru.enabled', !mineruEnabled)}>{mineruEnabled ? '先关闭 MinerU' : '启用 MinerU'}</button>
                 </div>
                 <p className="wizard-hint">提醒：第一次申请可能要等一会儿，Token 一般只有 90 天有效期。</p>
               </section>
@@ -806,13 +839,13 @@ function OnboardingModal({
               </section>
               <section className="wizard-summary-card">
                 <span>Longcat</span>
-                <strong>{getNestedValue(draftConfig, 'llm.model', 'LongCat-Flash-Chat')}</strong>
-                <p>{getNestedValue(draftConfig, 'llm.base_url', '').trim() ? `您填写了连接地址：${getNestedValue(draftConfig, 'llm.base_url', '')}` : '您没有填写连接地址，程序会优先走默认官方地址。'}</p>
+                <strong>{llmEnabled ? getNestedValue(draftConfig, 'llm.model', 'LongCat-Flash-Chat') : '未启用，先走离线基础版'}</strong>
+                <p>{llmEnabled ? (getNestedValue(draftConfig, 'llm.base_url', '').trim() ? `您填写了连接地址：${getNestedValue(draftConfig, 'llm.base_url', '')}` : '您没有填写连接地址，程序会优先走默认官方地址。') : '当前不会要求 API Key，也不会阻塞您先开始使用。'}</p>
               </section>
               <section className="wizard-summary-card">
                 <span>MinerU</span>
-                <strong>{Boolean(getNestedValue(draftConfig, 'mineru.enabled', true)) ? `${getNestedValue(draftConfig, 'mineru.mode', 'api')} 模式` : '已关闭'}</strong>
-                <p>模型版本：{getNestedValue(draftConfig, 'mineru.model_version', 'vlm')}；输出格式：{getNestedValue(draftConfig, 'mineru.output_format', 'markdown')}；解析方式：{getNestedValue(draftConfig, 'mineru.method', 'auto')}</p>
+                <strong>{mineruEnabled ? `${mineruMode} 模式` : '已关闭，先走基础解析'}</strong>
+                <p>{mineruEnabled ? `模型版本：${getNestedValue(draftConfig, 'mineru.model_version', 'vlm')}；输出格式：${getNestedValue(draftConfig, 'mineru.output_format', 'markdown')}；解析方式：${getNestedValue(draftConfig, 'mineru.method', 'auto')}` : '后续如果需要更完整的 PDF 拆解，可以再回来启用。'}</p>
               </section>
               <section className="wizard-summary-card full">
                 <span>确认后会发生什么</span>
@@ -828,7 +861,7 @@ function OnboardingModal({
           <div className="action-row">
             <button className="ghost" onClick={onBack} disabled={step === 0 || saving}>上一步</button>
             {step === 0 ? (
-              <button className="ghost" onClick={onSkip} disabled={saving}>先用推荐配置</button>
+              <button className="ghost" onClick={() => onSkip(buildBasicOnboardingConfig(draftConfig, env))} disabled={saving}>先用离线基础版</button>
             ) : null}
           </div>
           {isLastStep ? (
@@ -888,7 +921,7 @@ export default function App() {
         }));
 
         if (!onboardingCompleted) {
-          setWizardConfig(buildRecommendedOnboardingConfig(response.config, response.env));
+          setWizardConfig(buildBasicOnboardingConfig(response.config, response.env));
           setOnboarding({ visible: true, step: 0, saving: false, error: '' });
         }
       } catch (error) {
@@ -1147,10 +1180,12 @@ export default function App() {
     }
   }
 
-  async function finishOnboarding(configToPersist) {
+  async function finishOnboarding(configToPersist, options = {}) {
     setOnboarding((current) => ({ ...current, saving: true, error: '' }));
     try {
       const nextConfig = await persistConfig(configToPersist, '首次配置已保存。');
+      const nextMode = options.mode || (hasLlmCredentials(nextConfig) ? 'api' : 'regex');
+      setRunOptions((current) => ({ ...current, mode: nextMode }));
       setOnboarding({ visible: false, step: 0, saving: false, error: '' });
       setWizardConfig(cloneConfig(nextConfig));
       setActiveTab('analyze');
@@ -1160,12 +1195,12 @@ export default function App() {
   }
 
   function reopenOnboarding() {
-    setWizardConfig(buildRecommendedOnboardingConfig(config, env));
+    setWizardConfig(cloneConfig(config));
     setOnboarding({ visible: true, step: 0, saving: false, error: '' });
   }
 
-  function skipOnboarding() {
-    finishOnboarding(wizardConfig || buildRecommendedOnboardingConfig(config, env));
+  function skipOnboarding(configOverride) {
+    finishOnboarding(configOverride || wizardConfig || buildBasicOnboardingConfig(config, env), { mode: 'regex' });
   }
 
   function nextWizardStep() {
@@ -2024,7 +2059,7 @@ export default function App() {
               <article className="panel-card wide status-overview-card">
                 <div className="panel-head split">
                   <div>
-                    <span className="panel-kicker">Setup Map</span>
+                    <span className="panel-kicker">配置地图</span>
                     <h3>入口配置和初始化状态</h3>
                   </div>
                   <div className="action-row">
@@ -2074,15 +2109,15 @@ export default function App() {
               <article className="panel-card wide">
                 <div className="panel-head">
                   <div>
-                    <span className="panel-kicker">Configuration Guide</span>
+                    <span className="panel-kicker">配置顺序</span>
                     <h3>先填这些，再看高级项</h3>
                   </div>
                 </div>
                 <div className="settings-lane-grid">
                   <section className="settings-lane basic">
                     <span>基础必填</span>
-                    <strong>Longcat API Key、模型、MinerU 模式 / Token</strong>
-                    <p>第一次使用，先把这几项填好就够了。这样软件至少能正常分析和出结果。</p>
+                    <strong>先选运行方式：离线基础版，或联网增强版</strong>
+                    <p>如果只是先跑通软件，不一定要立刻填 API Key。先选论文目录并用离线基础版开始，后续再补联网能力也可以。</p>
                   </section>
                   <section className="settings-lane advanced">
                     <span>高级选项</span>
@@ -2148,7 +2183,7 @@ export default function App() {
               <article className="panel-card">
                 <div className="panel-head">
                   <div>
-                    <span className="panel-kicker">Basic + Advanced</span>
+                    <span className="panel-kicker">核心能力</span>
                     <h3>MinerU 与运行引擎</h3>
                   </div>
                 </div>
@@ -2280,7 +2315,7 @@ export default function App() {
           <div className="wizard-card run-confirm-card">
             <div className="wizard-header">
               <div>
-                <span className="eyebrow">Run Check</span>
+                <span className="eyebrow">启动前检查</span>
                 <h2>开始前，请再确认一遍</h2>
                 <p>下面这份摘要会告诉你：这次会处理哪里、怎么处理、结果会写到哪里。确认没问题再开始。</p>
               </div>

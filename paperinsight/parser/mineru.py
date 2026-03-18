@@ -169,12 +169,12 @@ class MinerUParser(BaseParser):
                 )
 
                 if process_result.returncode != 0:
-                    raise RuntimeError(f"MinerU CLI 执行失败: {process_result.stderr}")
+                    raise RuntimeError(f"MinerU CLI execution failed: {process_result.stderr}")
 
             except subprocess.TimeoutExpired:
-                raise RuntimeError(f"MinerU CLI 执行超时（>{self.timeout}秒）")
+                raise RuntimeError(f"MinerU CLI timed out (>{self.timeout}s)")
             except FileNotFoundError:
-                raise RuntimeError(f"MinerU CLI 未安装，请先安装: pip install magic-pdf[full]")
+                raise RuntimeError("MinerU CLI is not installed. Run: pip install magic-pdf[full]")
 
             # 查找输出文件
             # MinerU 输出目录结构：<output_dir>/<pdf_name>/auto/<pdf_name>.md
@@ -193,7 +193,7 @@ class MinerUParser(BaseParser):
                         md_file = path
                         break
                 else:
-                    raise FileNotFoundError(f"找不到 MinerU 输出文件: {md_file}")
+                    raise FileNotFoundError(f"MinerU output file not found: {md_file}")
 
             # 读取 Markdown 内容
             result.markdown = md_file.read_text(encoding="utf-8")
@@ -230,7 +230,7 @@ class MinerUParser(BaseParser):
         4. 下载结果压缩包并读取 full.md
         """
         if not self.token:
-            raise ValueError("API 模式需要配置 Token")
+            raise ValueError("API mode requires a configured token")
 
         headers = self._get_api_headers()
 
@@ -249,7 +249,7 @@ class MinerUParser(BaseParser):
         file_urls = upload_result.get("file_urls") or []
 
         if not batch_id or not file_urls:
-            raise RuntimeError(f"MinerU 未返回 batch_id 或上传链接: {upload_result}")
+            raise RuntimeError(f"MinerU did not return a batch_id or upload URLs: {upload_result}")
 
         # Step 2: 上传文件
         with file_path.open("rb") as f:
@@ -290,14 +290,14 @@ class MinerUParser(BaseParser):
                 break
             if status == "failed":
                 error = extract_result.get("err_msg") or "未知错误"
-                raise RuntimeError(f"任务失败: {error}")
+                raise RuntimeError(f"Task failed: {error}")
 
             time.sleep(poll_interval)
         else:
-            raise RuntimeError("任务超时")
+            raise RuntimeError("Task timed out")
 
         if not extract_result:
-            raise RuntimeError("任务完成但未找到对应的解析结果")
+            raise RuntimeError("Task completed but no matching parse result was found")
 
         self._populate_result_from_extract_result(result, batch_id, extract_result)
 
@@ -319,11 +319,11 @@ class MinerUParser(BaseParser):
             每个文件对应的 ParseResult
         """
         if self.mode != "api":
-            raise RuntimeError("批量解析仅支持 MinerU API 模式")
+            raise RuntimeError("Batch parsing is only supported in MinerU API mode")
         if not file_paths:
             return {}
         if not self.token:
-            raise ValueError("API 模式需要配置 Token")
+            raise ValueError("API mode requires a configured token")
 
         normalized_paths = [Path(path) for path in file_paths]
         for path in normalized_paths:
@@ -341,7 +341,7 @@ class MinerUParser(BaseParser):
         file_urls = upload_result.get("file_urls") or []
 
         if not batch_id or len(file_urls) != len(normalized_paths):
-            raise RuntimeError(f"批量上传链接返回异常: {upload_result}")
+            raise RuntimeError(f"Unexpected batch upload link response: {upload_result}")
 
         for path, upload_url in zip(normalized_paths, file_urls):
             with path.open("rb") as f:
@@ -499,7 +499,7 @@ class MinerUParser(BaseParser):
 
             time.sleep(poll_interval)
 
-        raise RuntimeError("批量解析任务超时")
+        raise RuntimeError("Batch parsing task timed out")
 
     def _populate_result_from_extract_result(
         self,
@@ -510,7 +510,7 @@ class MinerUParser(BaseParser):
         """从单个解析结果对象填充 ParseResult。"""
         full_zip_url = extract_result.get("full_zip_url")
         if not full_zip_url:
-            raise RuntimeError(f"任务已完成但缺少 full_zip_url: {extract_result}")
+            raise RuntimeError(f"Task completed but `full_zip_url` is missing: {extract_result}")
 
         archive_response = requests.get(full_zip_url, timeout=self.timeout)
         if archive_response.status_code != 200:
@@ -525,7 +525,7 @@ class MinerUParser(BaseParser):
 
             md_file = self._find_markdown_output(extract_dir)
             if not md_file:
-                raise FileNotFoundError("MinerU 结果压缩包中未找到 full.md")
+                raise FileNotFoundError("`full.md` was not found in the MinerU result archive")
 
             result.markdown = md_file.read_text(encoding="utf-8")
             if self.extract_tables:
@@ -562,7 +562,7 @@ class MinerUParser(BaseParser):
         try:
             payload = response.json()
         except ValueError as exc:
-            raise RuntimeError(f"{action}: 响应不是合法 JSON") from exc
+            raise RuntimeError(f"{action}: response is not valid JSON") from exc
 
         if payload.get("code") not in (0, None):
             message = payload.get("msg") or payload.get("message") or "未知错误"
@@ -570,7 +570,7 @@ class MinerUParser(BaseParser):
 
         data = payload.get("data")
         if data is None:
-            raise RuntimeError(f"{action}: 响应缺少 data 字段")
+            raise RuntimeError(f"{action}: response is missing the `data` field")
         return data
 
     def _match_extract_result(self, results: List[Dict[str, Any]], file_name: str) -> Dict[str, Any]:

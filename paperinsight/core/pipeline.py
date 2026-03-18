@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import time
+import sys
 from datetime import datetime
 from math import ceil
 from pathlib import Path
@@ -128,7 +129,7 @@ class AnalysisPipeline:
                     kimi_api_key=ai_model_config.get("kimi_api_key"),
                 )
             except Exception as e:
-                self.logger.warning(f"[AI模型IF获取器] 初始化失败: {e}")
+                self.logger.warning(f"[AI-IF] initializer failed: {e}")
 
         # 初始化报告生成器
         self.reporter = ReportGenerator(self.output_dir)
@@ -146,13 +147,13 @@ class AnalysisPipeline:
         try:
             parser = MinerUParser(config=mineru_config)
             if parser.is_available():
-                self.logger.info(f"[Parser] 使用 MinerU ({mineru_config.get('mode', 'cli')} 模式)")
+                self.logger.info(f"[Parser] using MinerU ({mineru_config.get('mode', 'cli')} mode)")
                 return parser
             else:
-                self.logger.warning("[Parser] MinerU 不可用，将使用基础 PDF 解析")
+                self.logger.warning("[Parser] MinerU unavailable; falling back to basic PDF parsing")
                 return None
         except Exception as e:
-            self.logger.warning(f"[Parser] MinerU 初始化失败: {e}")
+            self.logger.warning(f"[Parser] MinerU initialization failed: {e}")
             return None
 
     def process_pdf(
@@ -185,7 +186,7 @@ class AnalysisPipeline:
 
         # Step 1: 检查缓存
         if self.enable_cache and use_cache and self.cache_manager.has_data_cache(md5):
-            self.logger.info(f"[缓存命中] {pdf_name}")
+            self.logger.info(f"[CacheHit] {pdf_name}")
             cached_result = self.cache_manager.load_data_cache(md5)
             if cached_result:
                 try:
@@ -227,15 +228,15 @@ class AnalysisPipeline:
         start_time = start_time or time.time()
 
         self.logger.info(
-            f"[调试] 解析结果 markdown 长度: {len(parse_result.markdown) if parse_result.markdown else 0}"
+            f"[Debug] markdown length: {len(parse_result.markdown) if parse_result.markdown else 0}"
         )
         cleaned_content = self.cleaner.clean(parse_result.markdown)
         extraction_text = cleaned_content.get_text_for_extraction()
         self.logger.info(
-            f"[调试] 清洗后提取文本长度: {len(extraction_text) if extraction_text else 0}"
+            f"[Debug] extraction text length after cleaning: {len(extraction_text) if extraction_text else 0}"
         )
         self.logger.info(
-            f"[调试] full_text={len(cleaned_content.full_text) if cleaned_content.full_text else 0}, "
+            f"[Debug] full_text={len(cleaned_content.full_text) if cleaned_content.full_text else 0}, "
             f"abstract={len(cleaned_content.abstract) if cleaned_content.abstract else 0}, "
             f"introduction={len(cleaned_content.introduction) if cleaned_content.introduction else 0}, "
             f"experimental={len(cleaned_content.experimental) if cleaned_content.experimental else 0}, "
@@ -246,8 +247,8 @@ class AnalysisPipeline:
             return None, self._build_error_info(
                 pdf_name,
                 "NoContentAfterCleaning",
-                "清洗后无有效内容",
-                "文本清洗",
+                "No usable content remained after cleaning",
+                "TextCleaning",
                 pdf_path=str(pdf_path),
             )
 
@@ -261,8 +262,8 @@ class AnalysisPipeline:
             return None, self._build_error_info(
                 pdf_name,
                 "ExtractionFailed",
-                extraction_result.error_message or "数据提取失败",
-                "数据提取",
+                extraction_result.error_message or "Data extraction failed",
+                "Extraction",
                 pdf_path=str(pdf_path),
             )
 
@@ -273,7 +274,7 @@ class AnalysisPipeline:
             self._supplement_impact_factor(paper_data, journal_resolution)
         if self._needs_lite_backfill(paper_data):
             self.logger.info(
-                f"[LLM] 触发轻量补全: {pdf_name} | 缺失字段={','.join(self._collect_missing_core_fields(paper_data))}"
+                f"[LLM] lite backfill triggered: {pdf_name} | missing={','.join(self._collect_missing_core_fields(paper_data))}"
             )
             paper_data = self.extractor.lite_backfill_paper_info(
                 paper_data,
@@ -288,7 +289,7 @@ class AnalysisPipeline:
             self.cache_manager.save_data_cache(md5, paper_data.model_dump())
 
         processing_time = time.time() - start_time
-        self.logger.info(f"[完成] {pdf_name} ({processing_time:.1f}s)")
+        self.logger.info(f"[Done] {pdf_name} ({processing_time:.1f}s)")
 
         return paper_data, None
 
@@ -349,7 +350,7 @@ class AnalysisPipeline:
                         self.cache_manager.save_markdown_cache(md5, result.markdown)
                     return result
             except Exception as e:
-                self.logger.warning(f"[MinerU] 解析失败: {e}, 回退到基础解析")
+                self.logger.warning(f"[MinerU] parse failed: {e}; falling back to basic parsing")
 
         # 回退到基础 PDF 解析
         text_ratio_threshold = self.config.get("pdf", {}).get("text_ratio_threshold", 0.1)
@@ -386,7 +387,7 @@ class AnalysisPipeline:
                 eissn=raw_eissn,
             )
         except Exception as e:
-            self.logger.warning(f"[期刊解析] 失败: {e}")
+            self.logger.warning(f"[JournalResolve] failed: {e}")
             return None
 
         if raw_journal_title and not paper_info.raw_journal_title:
@@ -469,7 +470,7 @@ class AnalysisPipeline:
 
             # 优先使用 AI 模型方式获取影响因子（新方式）
             if use_ai_model_if and self.ai_model_if_fetcher:
-                self.logger.info(f"[IF搜索] 使用新方式查询: 期刊={journal_name}, 标题={paper_title[:30] if paper_title else 'N/A'}...")
+                self.logger.info(f"[IFLookup] query via AI method: journal={journal_name}, title={paper_title[:30] if paper_title else 'N/A'}...")
                 try:
                     # 传入期刊名称和论文标题
                     fetch_result = self.ai_model_if_fetcher.lookup(
@@ -482,12 +483,12 @@ class AnalysisPipeline:
                         paper_info.impact_factor_status = "OK"
                         if fetch_result.year:
                             paper_info.impact_factor_year = fetch_result.year
-                        self.logger.info(f"[IF搜索] 新方式获取成功: IF={fetch_result.impact_factor}, 来源={fetch_result.source_name}")
+                        self.logger.info(f"[IFLookup] AI method succeeded: IF={fetch_result.impact_factor}, source={fetch_result.source_name}")
                         return
                     else:
-                        self.logger.warning(f"[IF搜索] 新方式获取失败: {fetch_result.error_message}")
+                        self.logger.warning(f"[IFLookup] AI method failed: {fetch_result.error_message}")
                 except Exception as e:
-                    self.logger.warning(f"[IF搜索] 新方式查询异常: {e}")
+                    self.logger.warning(f"[IFLookup] AI method exception: {e}")
                 # 新方式失败，继续尝试原有方式
 
             # 原有方式：通过期刊元数据获取
@@ -549,7 +550,7 @@ class AnalysisPipeline:
             if should_correct_existing and abs(current_if - fetch_result.impact_factor) >= 0.5:
                 paper_info.impact_factor = fetch_result.impact_factor
         except Exception as e:
-            self.logger.warning(f"[IF搜索] 失败: {e}")
+            self.logger.warning(f"[IFLookup] failed: {e}")
 
     @staticmethod
     def _should_try_secondary_if_sources(fetch_result: Any) -> bool:
@@ -583,11 +584,13 @@ class AnalysisPipeline:
 
         pending_files: List[Tuple[Path, str]] = []
 
-        with tqdm(total=len(pdf_files), desc="处理 PDF") as progress_bar:
+        use_progress = bool(getattr(sys.stdout, "isatty", lambda: False)())
+
+        with tqdm(total=len(pdf_files), desc="Processing PDFs", disable=not use_progress) as progress_bar:
             for pdf_path in pdf_files:
                 md5 = calculate_md5(pdf_path) if self.enable_cache else ""
                 if self.enable_cache and use_cache and self.cache_manager.has_data_cache(md5):
-                    self.logger.info(f"[缓存命中] {pdf_path.name}")
+                    self.logger.info(f"[CacheHit] {pdf_path.name}")
                     cached_result = self.cache_manager.load_data_cache(md5)
                     if cached_result:
                         try:
@@ -615,18 +618,24 @@ class AnalysisPipeline:
                 for batch_index, batch_items in enumerate(self._chunk_items(pending_files, batch_size), start=1):
                     batch_paths = [pdf_path for pdf_path, _ in batch_items]
                     self.logger.info(
-                        f"[MinerU 批量] 第 {batch_index}/{total_batches} 批，文件数 {len(batch_paths)}"
+                        f"[MinerU Batch] batch {batch_index}/{total_batches}, files={len(batch_paths)}"
                     )
                     try:
                         parse_results = self.parser.parse_batch(
                             batch_paths,
-                            progress_callback=lambda info, batch_index=batch_index, total_batches=total_batches:
+                            progress_callback=lambda info, batch_index=batch_index, total_batches=total_batches: (
                                 progress_bar.set_postfix_str(
-                                    f"批次 {batch_index}/{total_batches} | 完成 {info.get('done', 0)}/{info.get('total', 0)} | 运行中 {info.get('running', 0)}"
-                                ),
+                                    "batch "
+                                    f"{batch_index}/{total_batches} | "
+                                    f"done {info.get('done', 0)}/{info.get('total', 0)} | "
+                                    f"running {info.get('running', 0)}"
+                                )
+                                if use_progress
+                                else None
+                            ),
                         )
                     except Exception as e:
-                        self.logger.warning(f"[MinerU 批量] 批量解析失败，回退逐篇处理: {e}")
+                        self.logger.warning(f"[MinerU Batch] batch parse failed; retrying one by one: {e}")
                         parse_results = {}
 
                     for pdf_path, md5 in batch_items:
@@ -702,10 +711,10 @@ class AnalysisPipeline:
                 pdf_files = list(pdf_dir.glob("*.pdf"))
 
         pdf_files = [Path(f) for f in pdf_files if Path(f).is_file()]
-        self.logger.info(f"找到 {len(pdf_files)} 个 PDF 文件")
+        self.logger.info(f"Found {len(pdf_files)} PDF files")
 
         if not pdf_files:
-            self.logger.warning("未找到 PDF 文件")
+            self.logger.warning("No PDF files found")
             return {"status": "no_files", "pdf_count": 0}
 
         # 批量处理
@@ -728,7 +737,7 @@ class AnalysisPipeline:
             error_log_path = self.error_logger.save()
             if error_log_path:
                 report_files["error_log"] = str(error_log_path)
-                self.logger.info(f"[错误日志] 已保存: {error_log_path}")
+                self.logger.info(f"[ErrorLog] saved: {error_log_path}")
 
         # 统计信息
         stats = {
@@ -857,10 +866,10 @@ class AnalysisPipeline:
     def _print_summary(self, stats: Dict[str, Any]) -> None:
         """打印处理摘要"""
         self.logger.info("=" * 70)
-        self.logger.info("处理完成!")
-        self.logger.info(f"总文件数: {stats['pdf_count']}")
-        self.logger.info(f"成功: {stats['success_count']}")
-        self.logger.info(f"失败: {stats['error_count']}")
+        self.logger.info("Processing complete")
+        self.logger.info(f"PDF count: {stats['pdf_count']}")
+        self.logger.info(f"Success: {stats['success_count']}")
+        self.logger.info(f"Failed: {stats['error_count']}")
         self.logger.info("=" * 70)
 
     @staticmethod
@@ -885,32 +894,32 @@ class AnalysisPipeline:
         info = paper_data.paper_info
         missing = []
         if not info.journal_name:
-            missing.append("期刊")
+            missing.append("journal")
         if info.impact_factor in (None, 0):
-            missing.append("影响因子")
+            missing.append("impact factor")
         if not paper_data.devices:
-            missing.append("器件数据")
+            missing.append("device data")
         else:
             best_device = paper_data.get_best_device()
             if not best_device or not best_device.eqe:
                 missing.append("EQE")
             if not best_device or not best_device.structure:
-                missing.append("结构")
+                missing.append("structure")
 
         if not missing:
-            return "处理成功：核心字段解析完整"
+            return "Completed: core fields are available"
 
         if len(missing) >= 4:
-            return "部分解析异常：缺少 " + "、".join(missing[:5])
-        return "处理成功：待补充 " + "、".join(missing)
+            return "Partial extraction: missing " + ", ".join(missing[:5])
+        return "Completed with gaps: " + ", ".join(missing)
 
     @staticmethod
     def _build_error_summary(error: Dict[str, Any]) -> str:
-        context = error.get("context", "处理流程")
-        message = error.get("error_message", "未知错误").strip()
+        context = error.get("context", "Pipeline")
+        message = error.get("error_message", "Unknown error").strip()
         if len(message) > 70:
             message = message[:67].rstrip() + "..."
-        return f"处理失败：{context} - {message}"
+        return f"Failed: {context} - {message}"
 
     def _collect_batch_item_result(
         self,
@@ -932,7 +941,7 @@ class AnalysisPipeline:
             self.error_logger.log_error(
                 error_info["pdf_name"],
                 Exception(error_info["error_message"]),
-                context=error_info.get("context", "PDF处理"),
+                context=error_info.get("context", "PDF"),
             )
 
     @staticmethod
@@ -954,6 +963,6 @@ class AnalysisPipeline:
         for temp_file in temp_files:
             try:
                 temp_file.unlink()
-                self.logger.info(f"已清理临时文件: {temp_file}")
+                self.logger.info(f"Temporary file removed: {temp_file}")
             except Exception as e:
-                self.logger.warning(f"清理临时文件失败: {temp_file}, {e}")
+                self.logger.warning(f"Temporary file cleanup failed: {temp_file}, {e}")

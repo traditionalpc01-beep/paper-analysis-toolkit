@@ -144,7 +144,7 @@ class DataExtractor:
     def _init_llm_client(self) -> None:
         """初始化 LLM 客户端"""
         if not self.llm_config.get("enabled", True):
-            self.logger.info("[LLM] 已禁用，使用正则兜底")
+            self.logger.info("[LLM] disabled; using regex fallback")
             return
 
         try:
@@ -156,18 +156,18 @@ class DataExtractor:
                 try:
                     available = self.llm.is_available()
                 except Exception as e:
-                    self.logger.warning(f"[LLM] {provider} 连通性检查异常，将在提取时直接尝试: {e}")
+                    self.logger.warning(f"[LLM] connectivity check raised an error; will try extraction directly: {e}")
                     available = True
 
                 if available:
-                    self.logger.info(f"[LLM] 客户端已就绪: {provider}")
+                    self.logger.info(f"[LLM] client ready: {provider}")
                 else:
-                    self.logger.warning(f"[LLM] {provider} 连通性检查失败，仍将尝试正式提取调用")
+                    self.logger.warning(f"[LLM] connectivity check failed for {provider}; extraction will still be attempted")
             else:
-                self.logger.warning(f"[LLM] 未能创建客户端: {provider}")
+                self.logger.warning(f"[LLM] could not create client: {provider}")
 
         except Exception as e:
-            self.logger.warning(f"[LLM] 客户端初始化失败: {e}")
+            self.logger.warning(f"[LLM] client initialization failed: {e}")
             self.llm = None
             self.lite_backfill_llm = None
 
@@ -192,10 +192,10 @@ class DataExtractor:
         try:
             client = create_llm_client(lite_config)
             if client:
-                self.logger.info(f"[LLM] 轻量补全模型已就绪: {lite_longcat_config['model']}")
+                self.logger.info(f"[LLM] lite backfill model ready: {lite_longcat_config['model']}")
             return client
         except Exception as e:
-            self.logger.warning(f"[LLM] 轻量补全模型初始化失败: {e}")
+            self.logger.warning(f"[LLM] lite backfill model init failed: {e}")
             return None
 
     def extract(
@@ -219,18 +219,18 @@ class DataExtractor:
 
         # 优先使用 LLM 提取
         if self.llm:
-            self.logger.info(f"[LLM] 开始使用 {self.llm_config.get('provider', 'unknown')} 提取结构化数据")
+            self.logger.info(f"[LLM] extracting structured data with {self.llm_config.get('provider', 'unknown')}")
             result = self._extract_with_llm(cleaned_text, parse_result)
             if result.success and result.data:
                 result.processing_time = time.time() - start_time
                 result.extraction_method = "llm"
                 result.llm_model = self.llm_config.get("provider", "unknown")
-                self.logger.info(f"[LLM] 提取成功: {result.llm_model}")
+                self.logger.info(f"[LLM] extraction succeeded: {result.llm_model}")
                 return result
-            self.logger.warning(f"[LLM] 提取失败，回退正则: {result.error_message}")
+            self.logger.warning(f"[LLM] extraction failed; falling back to regex: {result.error_message}")
 
         # 回退到正则提取
-        self.logger.info("[Regex] 启用正则兜底提取")
+        self.logger.info("[Regex] using regex fallback extraction")
         result = self._extract_with_regex(markdown_text, parse_result)
         result.processing_time = time.time() - start_time
         result.extraction_method = "regex"
@@ -250,7 +250,7 @@ class DataExtractor:
             prompt = format_extraction_prompt_v3(prepared_text)
 
             # 调用 LLM
-            self.logger.info(f"[LLM] 发送请求，文本长度 {len(prepared_text)} 字符")
+            self.logger.info(f"[LLM] sending request with text length {len(prepared_text)} chars")
             llm_kwargs: Dict[str, Any] = {}
             if self._supports_strict_schema():
                 llm_kwargs.update(
@@ -277,13 +277,13 @@ class DataExtractor:
             else:
                 return ExtractionResult(
                     success=False,
-                    error_message="LLM 返回数据校验失败",
+                    error_message="LLM response validation failed",
                 )
 
         except Exception as e:
             return ExtractionResult(
                 success=False,
-                error_message=f"LLM 提取失败: {str(e)}",
+                error_message=f"LLM extraction failed: {str(e)}",
             )
 
     def _ensure_bilingual_text_fields(self, paper_data: PaperData) -> PaperData:
@@ -296,7 +296,7 @@ class DataExtractor:
             return paper_data
 
         try:
-            self.logger.info("[LLM] 启用中英对照后处理，补齐标题及后续文本列")
+            self.logger.info("[LLM] running bilingual post-processing")
             prompt = format_bilingual_postprocess_prompt(paper_data.model_dump())
             llm_kwargs: Dict[str, Any] = {}
             if self._supports_strict_schema():
@@ -310,14 +310,14 @@ class DataExtractor:
             bilingual_data = self._parse_and_validate(response)
 
             if bilingual_data:
-                self.logger.info("[LLM] 中英对照后处理完成")
+                self.logger.info("[LLM] bilingual post-processing complete")
                 return bilingual_data
 
-            self.logger.warning("[LLM] 中英对照后处理返回数据校验失败，保留首次提取结果")
+            self.logger.warning("[LLM] bilingual post-processing validation failed; keeping initial extraction")
             return paper_data
 
         except Exception as e:
-            self.logger.warning(f"[LLM] 中英对照后处理失败，保留首次提取结果: {e}")
+            self.logger.warning(f"[LLM] bilingual post-processing failed; keeping initial extraction: {e}")
             return paper_data
 
     def _supports_strict_schema(self) -> bool:
@@ -338,7 +338,7 @@ class DataExtractor:
             return text
 
         self.logger.warning(
-            f"[LLM] 清洗后文本仍超过预算，执行边界截断: {len(text)} -> {max_chars}"
+            f"[LLM] cleaned text still exceeds budget; truncating at boundary: {len(text)} -> {max_chars}"
         )
         truncated = text[:max_chars]
         boundary = max(truncated.rfind("\n\n"), truncated.rfind("\n### "), truncated.rfind("\n## "))
@@ -426,10 +426,10 @@ class DataExtractor:
             return paper_data
 
         except ValidationError as e:
-            print(f"[校验失败] {e}")
+            print(f"[ValidationFailed] {e}")
             return None
         except Exception as e:
-            print(f"[解析失败] {e}")
+            print(f"[ParseFailed] {e}")
             return None
 
     def _extract_with_regex(
@@ -491,7 +491,7 @@ class DataExtractor:
         except Exception as e:
             return ExtractionResult(
                 success=False,
-                error_message=f"正则提取失败: {str(e)}",
+                error_message=f"Regex extraction failed: {str(e)}",
             )
 
     def _backfill_paper_info_from_text(
@@ -538,7 +538,7 @@ class DataExtractor:
             )
             response = self.lite_backfill_llm.generate_json(prompt, temperature=0.1)
             self.logger.info(
-                "[LLM] 轻量补全返回: "
+                "[LLM] lite backfill response: "
                 f"title={bool(response.get('title'))}, "
                 f"authors={bool(response.get('authors'))}, "
                 f"journal_name={bool(response.get('journal_name'))}, "
@@ -548,7 +548,7 @@ class DataExtractor:
             self._merge_lite_backfill_result(paper_data, response)
             return self._backfill_paper_info_from_text(paper_data, text, parse_result)
         except Exception as e:
-            self.logger.warning(f"[LLM] 轻量补全失败: {e}")
+            self.logger.warning(f"[LLM] lite backfill failed: {e}")
             return paper_data
 
     def _needs_lite_backfill(self, paper_data: PaperData) -> bool:
@@ -600,7 +600,7 @@ class DataExtractor:
                 paper_info.year = year
 
         self.logger.info(
-            "[LLM] 轻量补全合并后: "
+            "[LLM] lite backfill merged: "
             f"title={bool(paper_info.title)}, "
             f"authors={bool(paper_info.authors)}, "
             f"journal={paper_info.journal_name or paper_info.raw_journal_title!r}, "
