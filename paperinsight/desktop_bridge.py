@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import builtins
 import copy
 import json
 import logging
@@ -9,17 +10,22 @@ import socket
 import subprocess
 import sys
 import time
+import warnings
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from paperinsight import __version__
-from paperinsight.core.pipeline import AnalysisPipeline
 from paperinsight.utils.config import get_config_path, load_config, save_config
+from paperinsight.utils.terminal import SafeOutputStream
+
+
+PROTOCOL_STDOUT = sys.stdout
 
 
 def _emit(payload: dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    PROTOCOL_STDOUT.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    PROTOCOL_STDOUT.flush()
 
 
 def _read_json_stdin() -> dict[str, Any]:
@@ -30,8 +36,11 @@ def _read_json_stdin() -> dict[str, Any]:
 
 
 def _configure_logging() -> None:
-    formatter = logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
-    handler = logging.StreamHandler(sys.stderr)
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    handler = logging.StreamHandler(SafeOutputStream(sys.stderr))
     handler.setFormatter(formatter)
 
     for name in (
@@ -39,12 +48,41 @@ def _configure_logging() -> None:
         "paperinsight.pipeline",
         "paperinsight.extractor",
         "paperinsight.parser",
+        "paperinsight.cache",
+        "paperinsight.reporter",
+        "paperinsight.file_renamer",
     ):
         logger = logging.getLogger(name)
         logger.handlers = []
         logger.propagate = False
         logger.setLevel(logging.INFO)
         logger.addHandler(handler)
+
+
+def _configure_warnings() -> None:
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*urllib3 .* doesn't match a supported version!.*",
+    )
+
+
+@contextmanager
+def _redirect_runtime_output():
+    original_stdout = sys.stdout
+    original_print = builtins.print
+    redirected_stdout = SafeOutputStream(sys.stderr)
+
+    def _stderr_print(*args, **kwargs):
+        kwargs.setdefault("file", redirected_stdout)
+        return original_print(*args, **kwargs)
+
+    sys.stdout = redirected_stdout
+    builtins.print = _stderr_print
+    try:
+        yield
+    finally:
+        builtins.print = original_print
+        sys.stdout = original_stdout
 
 
 def _has_online_capability(config: dict[str, Any]) -> bool:
@@ -101,7 +139,7 @@ def _probe_network() -> dict[str, Any]:
                     "available": True,
                     "target": f"{host}:{port}",
                     "latencyMs": latency_ms,
-                    "message": f"已连接 {host}:{port}，基础联网可用。",
+                    "message": f"Connected to {host}:{port}. Basic network access is available.",
                 }
         except OSError as error:
             last_error = str(error)
@@ -109,7 +147,7 @@ def _probe_network() -> dict[str, Any]:
         "available": False,
         "target": "",
         "latencyMs": None,
-        "message": f"基础联网检测失败：{last_error}",
+        "message": f"Basic network check failed: {last_error}",
     }
 
 
@@ -129,6 +167,8 @@ def _probe_system_python(config: dict[str, Any]) -> dict[str, Any]:
             [command, "-c", probe_code],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=False,
         )
@@ -139,7 +179,7 @@ def _probe_system_python(config: dict[str, Any]) -> dict[str, Any]:
             "executable": "",
             "version": "",
             "hasPaperInsight": False,
-            "message": f"未找到 Python 命令：{command}",
+            "message": f"Python command not found: {command}",
         }
     except Exception as error:
         return {
@@ -148,18 +188,18 @@ def _probe_system_python(config: dict[str, Any]) -> dict[str, Any]:
             "executable": "",
             "version": "",
             "hasPaperInsight": False,
-            "message": f"Python 检测失败：{error}",
+            "message": f"Python probe failed: {error}",
         }
 
     if result.returncode != 0:
-        message = result.stderr.strip() or result.stdout.strip() or f"退出码 {result.returncode}"
+        message = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
         return {
             "available": False,
             "command": command,
             "executable": "",
             "version": "",
             "hasPaperInsight": False,
-            "message": f"Python 不可用：{message}",
+            "message": f"Python is not available: {message}",
         }
 
     try:
@@ -170,9 +210,9 @@ def _probe_system_python(config: dict[str, Any]) -> dict[str, Any]:
     has_paperinsight = bool(payload.get("hasPaperInsight"))
     version = str(payload.get("version", ""))
     executable = str(payload.get("executable", ""))
-    message = "已检测到可用的系统 Python 环境。"
+    message = "A usable system Python environment was detected."
     if not has_paperinsight:
-        message = "系统 Python 可用，但该环境未安装 paperinsight。"
+        message = "System Python is available, but paperinsight is not installed there."
 
     return {
         "available": True,
@@ -194,73 +234,75 @@ def _build_startup_recommendation(
 
     if bundled.get("available"):
         engine_mode = "bundled"
-        engine_reason = "检测到内置后端，可直接启动，无需依赖用户本地 Python 环境。"
+        engine_reason = "Bundled backend detected. Desktop can start without a user-managed Python environment."
         fallback_engine = (
             {
                 "mode": "system_python",
-                "label": "系统 Python",
-                "reason": "如果需要沿用本地脚本环境，可切换到系统 Python。",
+                "label": "System Python",
+                "reason": "Switch here if you want to reuse an existing local Python environment.",
             }
             if system_python.get("available") and system_python.get("hasPaperInsight")
             else None
         )
     elif system_python.get("available") and system_python.get("hasPaperInsight"):
         engine_mode = "system_python"
-        engine_reason = "未检测到内置后端，但系统 Python 环境完整，可作为默认启动方式。"
+        engine_reason = "Bundled backend was not found, but system Python is ready and can be used as the default engine."
         fallback_engine = None
     else:
         engine_mode = "manual_check"
-        engine_reason = "暂未检测到可直接使用的运行引擎，请检查内置后端或系统 Python 环境。"
+        engine_reason = "No ready-to-run backend was detected. Check the bundled backend or system Python setup."
         fallback_engine = None
 
     if network.get("available") and _has_online_capability(config):
         analysis_mode = "api"
-        analysis_reason = "网络可用且检测到完整 API 凭据，推荐优先使用智能 API 模式。"
+        analysis_reason = "Network access and API credentials are available. API mode is recommended."
     elif network.get("available"):
         analysis_mode = "regex"
-        analysis_reason = "网络可用，但尚未检测到完整 API 凭据，建议先用正则兜底。"
+        analysis_reason = "Network access is available, but API credentials are incomplete. Regex fallback is recommended first."
     else:
         analysis_mode = "regex"
-        analysis_reason = "当前网络不可用或受限，建议先用正则兜底。"
+        analysis_reason = "Network access is unavailable or limited. Regex fallback is recommended."
 
     fallback_tool = {
         "id": "regex",
-        "label": "正则兜底",
-        "reason": "当 API 或网络不可用时，仍可继续完成基础信息抽取。",
+        "label": "Regex fallback",
+        "reason": "Use this mode to keep basic extraction working when API access is unavailable.",
     }
     if engine_mode == "manual_check":
         fallback_tool = {
             "id": "manual_check",
-            "label": "检查 Python/内置后端",
-            "reason": "需要先修复启动引擎，再决定是否使用正则或 API 模式。",
+            "label": "Check backend",
+            "reason": "Fix the startup engine first, then choose between regex and API mode.",
         }
 
     if engine_mode == "manual_check":
         readiness = {
             "status": "blocked",
-            "summary": "启动引擎不可用，需要先修复环境。",
+            "summary": "No usable startup engine is available yet.",
         }
     elif analysis_mode == "regex":
         readiness = {
             "status": "limited",
-            "summary": "软件可启动，建议先使用兜底模式运行。",
+            "summary": "Desktop can start, but regex fallback is the safer mode right now.",
         }
     else:
         readiness = {
             "status": "ready",
-            "summary": "基础环境检查通过，可按推荐方式启动。",
+            "summary": "Startup checks passed. You can use the recommended mode.",
         }
 
     recommendation = {
         "engineMode": engine_mode,
         "engineLabel": {
-            "bundled": "内置后端",
-            "system_python": "系统 Python",
-            "manual_check": "需手动检查",
+            "bundled": "Bundled backend",
+            "system_python": "System Python",
+            "manual_check": "Manual check",
         }.get(engine_mode, engine_mode),
         "engineReason": engine_reason,
         "analysisMode": analysis_mode,
-        "analysisLabel": {"api": "智能 API", "regex": "正则兜底"}.get(analysis_mode, analysis_mode),
+        "analysisLabel": {"api": "Smart API", "regex": "Regex fallback"}.get(
+            analysis_mode, analysis_mode
+        ),
         "analysisReason": analysis_reason,
         "fallbackEngine": fallback_engine,
         "fallbackTool": fallback_tool,
@@ -268,10 +310,31 @@ def _build_startup_recommendation(
     return recommendation, readiness
 
 
-def _collect_pdf_files(pdf_dir: Path, recursive: bool) -> list[Path]:
+def _default_output_dir(pdf_dir: Path) -> Path:
+    return pdf_dir / "output"
+
+
+def _is_same_or_child(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _collect_pdf_files(pdf_dir: Path, recursive: bool, exclude_dirs: list[Path] | None = None) -> list[Path]:
     pattern = "*.pdf"
     files = pdf_dir.rglob(pattern) if recursive else pdf_dir.glob(pattern)
-    return sorted(path for path in files if path.is_file())
+    excluded = [item.resolve() for item in (exclude_dirs or [])]
+    collected = []
+    for path in files:
+        if not path.is_file():
+            continue
+        resolved_path = path.resolve()
+        if any(_is_same_or_child(resolved_path.parent, directory) for directory in excluded):
+            continue
+        collected.append(path)
+    return sorted(collected)
 
 
 def _build_runtime_config(config: dict[str, Any], request: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -379,7 +442,7 @@ def command_config_save() -> int:
     payload = _read_json_stdin()
     config = payload.get("config")
     if not isinstance(config, dict):
-        _emit({"ok": False, "message": "缺少有效的 config 对象"})
+        _emit({"ok": False, "message": "Missing valid config payload."})
         return 1
 
     path = save_config(config)
@@ -402,9 +465,9 @@ def command_env_info() -> int:
             "current": bool(getattr(sys, "frozen", False)),
             "path": bundled_path,
             "message": (
-                "已检测到内置后端。"
+                "Bundled backend detected."
                 if bundled_available
-                else "当前未检测到内置后端，可改用系统 Python。"
+                else "Bundled backend was not detected. You can switch to system Python."
             ),
         },
         "network": _probe_network(),
@@ -430,6 +493,7 @@ def command_env_info() -> int:
 
 
 def command_analyze() -> int:
+    _configure_warnings()
     _configure_logging()
     request = _read_json_stdin()
     config = load_config()
@@ -437,21 +501,38 @@ def command_analyze() -> int:
 
     pdf_dir = Path(request.get("pdfDir") or "")
     if not str(pdf_dir):
-        _emit({"type": "failed", "message": "请选择包含 PDF 的目录。"})
+        _emit({"type": "failed", "message": "Please select a folder that contains PDF files."})
         return 1
     if not pdf_dir.exists() or not pdf_dir.is_dir():
-        _emit({"type": "failed", "message": f"目录不存在：{pdf_dir}"})
+        _emit({"type": "failed", "message": f"Input folder does not exist: {pdf_dir}"})
         return 1
 
-    output_dir = Path(request.get("outputDir") or (pdf_dir / "输出结果"))
+    output_dir = Path(request.get("outputDir") or _default_output_dir(pdf_dir))
+    if output_dir.exists() and output_dir.is_file():
+        _emit({"type": "failed", "message": f"Output path is a file, not a directory: {output_dir}"})
+        return 1
+    if output_dir.resolve() == pdf_dir.resolve():
+        _emit(
+            {
+                "type": "failed",
+                "message": "Output folder must be different from the input folder.",
+            }
+        )
+        return 1
+
     recursive = bool(request.get("recursive"))
-    pdf_files = _collect_pdf_files(pdf_dir, recursive)
+    pdf_files = _collect_pdf_files(
+        pdf_dir,
+        recursive,
+        exclude_dirs=[output_dir] if _is_same_or_child(output_dir, pdf_dir) else None,
+    )
 
     if not pdf_files:
         _emit(
             {
                 "type": "completed",
                 "selectedMode": selected_mode,
+                "outputDir": str(output_dir),
                 "stats": {
                     "status": "no_files",
                     "pdfCount": 0,
@@ -477,100 +558,110 @@ def command_analyze() -> int:
         )
         save_config(persisted_config)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    pipeline = AnalysisPipeline(
-        output_dir=output_dir,
-        config=runtime_config,
-        cache_dir=runtime_config.get("cache", {}).get("directory", ".cache"),
-    )
+    with _redirect_runtime_output():
+        from paperinsight.core.pipeline import AnalysisPipeline
 
-    results: list[Any] = []
-    errors: list[dict[str, Any]] = []
-    processed_items: list[tuple[Path, Any]] = []
+        output_dir.mkdir(parents=True, exist_ok=True)
+        pipeline = AnalysisPipeline(
+            output_dir=output_dir,
+            config=runtime_config,
+            cache_dir=runtime_config.get("cache", {}).get("directory", ".cache"),
+        )
 
-    _emit(
-        {
-            "type": "started",
-            "selectedMode": selected_mode,
-            "total": len(pdf_files),
-            "pdfDir": str(pdf_dir),
-            "outputDir": str(output_dir),
-        }
-    )
+        results: list[Any] = []
+        errors: list[dict[str, Any]] = []
+        processed_items: list[tuple[Path, Any]] = []
 
-    for index, pdf_path in enumerate(pdf_files, start=1):
         _emit(
             {
-                "type": "progress",
-                "stage": "processing",
-                "currentFile": pdf_path.name,
-                "currentPath": str(pdf_path),
-                "completed": index - 1,
+                "type": "started",
+                "selectedMode": selected_mode,
                 "total": len(pdf_files),
+                "pdfDir": str(pdf_dir),
+                "outputDir": str(output_dir),
             }
         )
-        paper_data, error_info = pipeline.process_pdf(
-            pdf_path=pdf_path,
-            max_pages=request.get("maxPages") or None,
-            use_cache=runtime_config.get("cache", {}).get("enabled", True),
-        )
-        pipeline._collect_batch_item_result(
-            pdf_path=pdf_path,
-            paper_data=paper_data,
-            error_info=error_info,
-            results=results,
-            errors=errors,
-            processed_items=processed_items,
-        )
 
-        if paper_data:
-            paper_info = paper_data.paper_info
+        for index, pdf_path in enumerate(pdf_files, start=1):
             _emit(
                 {
-                    "type": "file-complete",
-                    "status": "success",
-                    "completed": index,
+                    "type": "progress",
+                    "stage": "processing",
+                    "currentFile": pdf_path.name,
+                    "currentPath": str(pdf_path),
+                    "completed": index - 1,
                     "total": len(pdf_files),
-                    "file": pdf_path.name,
-                    "title": paper_info.title,
-                    "journal": paper_info.journal_name,
-                    "impactFactor": paper_info.impact_factor,
                 }
             )
-        else:
-            _emit(
-                {
-                    "type": "file-complete",
-                    "status": "error",
-                    "completed": index,
-                    "total": len(pdf_files),
-                    "file": pdf_path.name,
-                    "message": (error_info or {}).get("error_message", "处理失败"),
-                }
+            paper_data, error_info = pipeline.process_pdf(
+                pdf_path=pdf_path,
+                max_pages=request.get("maxPages") or None,
+                use_cache=runtime_config.get("cache", {}).get("enabled", True),
+            )
+            pipeline._collect_batch_item_result(
+                pdf_path=pdf_path,
+                paper_data=paper_data,
+                error_info=error_info,
+                results=results,
+                errors=errors,
+                processed_items=processed_items,
             )
 
-    renamed_count = 0
-    if runtime_config.get("output", {}).get("rename_pdfs") and processed_items:
-        renamed_count = pipeline._rename_pdfs(
+            if paper_data:
+                paper_info = paper_data.paper_info
+                _emit(
+                    {
+                        "type": "file-complete",
+                        "status": "success",
+                        "completed": index,
+                        "total": len(pdf_files),
+                        "file": pdf_path.name,
+                        "title": paper_info.title,
+                        "journal": paper_info.journal_name,
+                        "impactFactor": paper_info.impact_factor,
+                    }
+                )
+            else:
+                _emit(
+                    {
+                        "type": "file-complete",
+                        "status": "error",
+                        "completed": index,
+                        "total": len(pdf_files),
+                        "file": pdf_path.name,
+                        "message": (error_info or {}).get("error_message", "Processing failed"),
+                    }
+                )
+
+        renamed_count = 0
+        if runtime_config.get("output", {}).get("rename_pdfs") and processed_items:
+            renamed_count = pipeline._rename_pdfs(
+                processed_items,
+                runtime_config.get("output", {}).get(
+                    "rename_template", "[{year}_{impact_factor}_{journal}]_{title}.pdf"
+                ),
+            )
+
+        report_files = pipeline._generate_reports(
             processed_items,
-            runtime_config.get("output", {}).get(
-                "rename_template", "[{year}_{impact_factor}_{journal}]_{title}.pdf"
-            ),
+            errors,
+            runtime_config.get("output", {}).get("sort_by_if", True),
         )
 
-    report_files = pipeline._generate_reports(
-        processed_items,
-        errors,
-        runtime_config.get("output", {}).get("sort_by_if", True),
-    )
+        if pipeline.error_logger.errors:
+            error_log_path = pipeline.error_logger.save()
+            if error_log_path:
+                report_files["error_log"] = str(error_log_path)
 
-    if pipeline.error_logger.errors:
-        error_log_path = pipeline.error_logger.save()
-        if error_log_path:
-            report_files["error_log"] = str(error_log_path)
-
-    stats = _build_stats(pdf_files, results, errors, report_files, renamed_count, processed_items)
-    _emit({"type": "completed", "selectedMode": selected_mode, "stats": stats})
+        stats = _build_stats(pdf_files, results, errors, report_files, renamed_count, processed_items)
+        _emit(
+            {
+                "type": "completed",
+                "selectedMode": selected_mode,
+                "outputDir": str(output_dir),
+                "stats": stats,
+            }
+        )
     return 0
 
 
@@ -587,6 +678,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    _configure_warnings()
 
     try:
         if args.command == "config-get":

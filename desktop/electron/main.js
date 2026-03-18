@@ -65,8 +65,11 @@ function spawnBackend(command, payload, engine = {}) {
     cwd: path.resolve(__dirname, '..', '..'),
     env: {
       ...process.env,
-      PYTHONIOENCODING: 'utf-8'
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
+      PYTHONLEGACYWINDOWSSTDIO: '0'
     },
+    windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe']
   });
 
@@ -93,7 +96,7 @@ function collectBackendResponse(command, payload, engine = {}) {
     });
 
     child.on('error', (error) => {
-      reject(new Error(`无法启动后端：${error.message}`));
+      reject(new Error(`Unable to start backend: ${error.message}`));
     });
 
     child.on('close', (code) => {
@@ -104,7 +107,7 @@ function collectBackendResponse(command, payload, engine = {}) {
         .pop();
 
       if (code !== 0 && !line) {
-        reject(new Error(stderr.trim() || `后端执行失败，退出码 ${code}`));
+        reject(new Error(stderr.trim() || `Backend command failed with exit code ${code}`));
         return;
       }
 
@@ -112,7 +115,7 @@ function collectBackendResponse(command, payload, engine = {}) {
         const data = line ? JSON.parse(line) : {};
         resolve({ ...data, _launch: launch, _stderr: stderr.trim() });
       } catch (error) {
-        reject(new Error(`解析后端响应失败：${error.message}`));
+        reject(new Error(`Failed to parse backend response: ${error.message}`));
       }
     });
   });
@@ -142,13 +145,13 @@ async function collectEnvironmentInfo(config) {
           available: fs.existsSync(bundledBackendPath()),
           current: false,
           path: bundledBackendPath(),
-          message: '环境检测未完整返回，请检查后端。'
+          message: 'Environment probe did not return a complete backend result.'
         },
         network: {
           available: false,
           target: '',
           latencyMs: null,
-          message: error.message || '环境检测失败'
+          message: error.message || 'Environment probe failed.'
         },
         systemPython: {
           available: false,
@@ -156,27 +159,27 @@ async function collectEnvironmentInfo(config) {
           executable: '',
           version: '',
           hasPaperInsight: false,
-          message: error.message || '环境检测失败'
+          message: error.message || 'Environment probe failed.'
         }
       },
       recommendation: {
         engineMode: 'bundled',
-        engineLabel: '内置后端',
-        engineReason: '环境检测失败时优先保留内置后端。',
+        engineLabel: 'Bundled backend',
+        engineReason: 'Fallback to the bundled backend when environment probing fails.',
         analysisMode: 'regex',
-        analysisLabel: '正则兜底',
-        analysisReason: '环境检测失败时建议先使用正则兜底。',
+        analysisLabel: 'Regex fallback',
+        analysisReason: 'Use regex fallback first when environment probing fails.',
         fallbackTool: {
           id: 'regex',
-          label: '正则兜底',
-          reason: '待环境检测恢复后再切换智能模式。'
+          label: 'Regex fallback',
+          reason: 'Switch back to API mode after environment probing works again.'
         }
       },
       readiness: {
         status: 'limited',
-        summary: '环境检测失败，建议先用内置后端和正则模式。'
+        summary: 'Environment probing failed. Start with the bundled backend and regex mode.'
       },
-      diagnosticsError: error.message || '环境检测失败'
+      diagnosticsError: error.message || 'Environment probe failed.'
     };
   }
 }
@@ -274,7 +277,7 @@ ipcMain.handle('analysis:start', async (_event, payload) => {
             resolve({ ok: true, launch });
           }
         } catch (error) {
-          emitAnalysisEvent({ type: 'log', level: 'error', message: `解析消息失败：${error.message}` });
+          emitAnalysisEvent({ type: 'log', level: 'info', message: line.trim() });
         }
       }
     });
@@ -292,7 +295,7 @@ ipcMain.handle('analysis:start', async (_event, payload) => {
 
     child.on('error', (error) => {
       activeAnalysisProcess = null;
-      reject(new Error(`无法启动分析后端：${error.message}`));
+      reject(new Error(`Unable to start analysis backend: ${error.message}`));
     });
 
     child.on('close', (code) => {
@@ -300,8 +303,11 @@ ipcMain.handle('analysis:start', async (_event, payload) => {
       if (stderrBuffer.trim()) {
         emitAnalysisEvent({ type: 'log', level: 'info', message: stderrBuffer.trim() });
       }
-      if (!started && code !== 0) {
-        reject(new Error(`分析进程异常退出，退出码 ${code}`));
+      if (!started) {
+        reject(new Error(code === 0
+          ? 'Analysis process exited before emitting any lifecycle event.'
+          : `Analysis process exited unexpectedly with code ${code}`));
+        return;
       }
       emitAnalysisEvent({ type: 'process-exit', code });
     });

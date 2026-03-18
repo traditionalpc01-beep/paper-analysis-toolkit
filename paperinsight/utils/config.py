@@ -96,6 +96,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "resolve_journal_metadata": True,
         "fetch_official_impact_factor": True,
         "correct_existing_impact_factor": True,
+        "impact_factor_validation_tolerance": 0.6,
+        "letpub": {
+            "enabled": True,
+            "timeout": 30,
+        },
         "use_ai_model_if": False,
         "ai_model_if": {
             "enabled": False,

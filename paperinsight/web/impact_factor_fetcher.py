@@ -140,6 +140,32 @@ class MJLImpactFactorFetcher:
 
         return self._fallback_lookup(candidate, status="NOT_VISIBLE", default_url=profile_url)
 
+    def lookup_by_title(self, journal_title: Optional[str]) -> ImpactFactorLookupResult:
+        canonical_title = canonicalize_journal_title(journal_title)
+        if not canonical_title:
+            return ImpactFactorLookupResult(
+                status="NO_QUERY",
+                source_name="CURATED_FALLBACK",
+                source_url="",
+            )
+
+        fallback = self.fallback_impact_factors.get(canonical_title)
+        if not fallback:
+            return ImpactFactorLookupResult(
+                status="NO_MATCH",
+                source_name="CURATED_FALLBACK",
+                source_url="",
+            )
+
+        impact_factor, year, source_url = fallback
+        return ImpactFactorLookupResult(
+            status="OK",
+            source_name="CURATED_FALLBACK",
+            source_url=source_url,
+            impact_factor=impact_factor,
+            year=year,
+        )
+
     def _register_fallback(
         self,
         titles: list[str],

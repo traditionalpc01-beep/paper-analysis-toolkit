@@ -4,11 +4,15 @@
 """
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
 
 from paperinsight.utils.hash_utils import calculate_md5
+
+
+logger = logging.getLogger("paperinsight.cache")
 
 
 class CacheManager:
@@ -128,7 +132,7 @@ class CacheManager:
             with cache_path.open("r", encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError) as e:
-            print(f"[警告] 缓存文件损坏: {cache_path}, 错误: {e}")
+            logger.warning(f"[Cache] broken data cache ignored: {cache_path} | {e}")
             return None
     
     def save_data_cache(self, md5: str, data: dict) -> Path:
@@ -183,7 +187,7 @@ class CacheManager:
             try:
                 return cache_path.read_text(encoding="utf-8")
             except OSError as e:
-                print(f"[警告] Markdown 缓存文件读取失败: {cache_path}, 错误: {e}")
+                logger.warning(f"[Cache] markdown cache read failed: {cache_path} | {e}")
 
         return None
     

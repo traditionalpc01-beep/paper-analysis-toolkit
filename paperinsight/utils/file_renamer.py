@@ -4,9 +4,13 @@
 """
 
 import re
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
+
+
+logger = logging.getLogger("paperinsight.file_renamer")
 
 
 class FileRenamer:
@@ -121,10 +125,10 @@ class FileRenamer:
                 path.rename(new_path)
                 return new_path
             except Exception as e:
-                print(f"[重命名失败] {path.name}: {e}")
+                logger.warning(f"[RenameFailed] {path.name}: {e}")
                 return None
         else:
-            print(f"[预览] {path.name} -> {new_name}")
+            logger.info(f"[RenamePreview] {path.name} -> {new_name}")
             return new_path
     
     def batch_rename(

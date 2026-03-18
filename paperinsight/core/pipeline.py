@@ -32,8 +32,9 @@ from paperinsight.utils.hash_utils import calculate_md5
 from paperinsight.utils.file_renamer import FileRenamer
 from paperinsight.utils.logger import ErrorLogger, setup_logger
 from paperinsight.utils.pdf_utils import extract_text_with_fallback
-from paperinsight.web.impact_factor_fetcher import MJLImpactFactorFetcher
+from paperinsight.web.impact_factor_fetcher import ImpactFactorLookupResult, MJLImpactFactorFetcher
 from paperinsight.web.journal_resolver import MJLJournalResolution, MJLJournalResolver
+from paperinsight.web.letpub_fetcher import LetPubImpactFactorFetcher
 from paperinsight.web.search_crawler_fetcher import SearchCrawlerFetcher
 from paperinsight.web.wos_journal_fetcher import WOSJournalFetcher
 from paperinsight.utils.journal_metadata import canonicalize_journal_title
@@ -88,12 +89,18 @@ class AnalysisPipeline:
         web_enabled = bool(web_config.get("enabled", True))
         self.journal_resolver = (
             MJLJournalResolver(timeout=timeout)
-            if web_enabled and web_config.get("resolve_journal_metadata", True)
+            if web_config.get("resolve_journal_metadata", True)
             else None
         )
         self.if_fetcher = (
             MJLImpactFactorFetcher(timeout=timeout)
-            if web_enabled and web_config.get("fetch_official_impact_factor", True)
+            if web_config.get("fetch_official_impact_factor", True)
+            else None
+        )
+        letpub_config = web_config.get("letpub", {})
+        self.letpub_if_fetcher = (
+            LetPubImpactFactorFetcher(timeout=int(letpub_config.get("timeout", timeout)))
+            if letpub_config.get("enabled", True)
             else None
         )
         crawler_config = web_config.get("search_crawler", {})
@@ -102,7 +109,7 @@ class AnalysisPipeline:
                 timeout=timeout,
                 market=str(crawler_config.get("market", "en-US")),
             )
-            if web_enabled and crawler_config.get("enabled", True)
+            if crawler_config.get("enabled", True)
             else None
         )
         wos_config = web_config.get("web_of_science", {})
@@ -113,7 +120,7 @@ class AnalysisPipeline:
                 timeout=timeout,
                 base_url=wos_config.get("journals_api_url"),
             )
-            if web_enabled and wos_config.get("enabled") and wos_api_key
+            if wos_config.get("enabled") and wos_api_key
             else None
         )
         
@@ -270,7 +277,15 @@ class AnalysisPipeline:
         paper_data = extraction_result.data
 
         journal_resolution = self._resolve_journal_metadata(paper_data)
-        if self.if_fetcher:
+        if any(
+            [
+                self.letpub_if_fetcher,
+                self.if_fetcher,
+                self.ai_model_if_fetcher,
+                self.search_crawler_fetcher,
+                self.wos_if_fetcher,
+            ]
+        ):
             self._supplement_impact_factor(paper_data, journal_resolution)
         if self._needs_lite_backfill(paper_data):
             self.logger.info(
@@ -282,7 +297,15 @@ class AnalysisPipeline:
                 parse_result,
             )
             journal_resolution = self._resolve_journal_metadata(paper_data)
-            if self.if_fetcher:
+            if any(
+                [
+                    self.letpub_if_fetcher,
+                    self.if_fetcher,
+                    self.ai_model_if_fetcher,
+                    self.search_crawler_fetcher,
+                    self.wos_if_fetcher,
+                ]
+            ):
                 self._supplement_impact_factor(paper_data, journal_resolution)
 
         if self.enable_cache and use_cache:
@@ -464,8 +487,49 @@ class AnalysisPipeline:
             should_correct_existing = bool(web_config.get("correct_existing_impact_factor", True))
             fetch_official_impact_factor = bool(web_config.get("fetch_official_impact_factor", True))
             use_ai_model_if = bool(web_config.get("use_ai_model_if", False))
+            validation_tolerance = float(web_config.get("impact_factor_validation_tolerance", 0.6))
 
             if current_if and not should_correct_existing and 0.1 <= current_if <= 200 and not fetch_official_impact_factor:
+                return
+
+            resolution = journal_resolution
+            candidate = None
+            if any((journal_name, paper_info.raw_issn, paper_info.raw_eissn)):
+                resolution = resolution or self._resolve_journal_metadata(paper_data)
+                if resolution is not None:
+                    candidate = self._select_journal_candidate(resolution, journal_name)
+
+            letpub_journal_name = (
+                candidate.display_title if candidate and candidate.display_title else None
+            ) or journal_name
+
+            letpub_result = None
+            if self.letpub_if_fetcher and any((letpub_journal_name, paper_info.raw_issn, paper_info.raw_eissn)):
+                letpub_result = self.letpub_if_fetcher.lookup(
+                    journal_title=letpub_journal_name,
+                    issn=paper_info.matched_issn or paper_info.raw_issn,
+                    eissn=paper_info.raw_eissn,
+                )
+            secondary_results = self._lookup_secondary_impact_factor_results(
+                paper_info=paper_info,
+                candidate=candidate,
+                fetch_official_impact_factor=fetch_official_impact_factor,
+            )
+
+            selected_result = self._select_validated_impact_factor_result(
+                letpub_result=letpub_result,
+                secondary_results=secondary_results,
+                tolerance=validation_tolerance,
+            )
+            if selected_result and self._apply_impact_factor_result(
+                paper_info,
+                selected_result,
+                current_if=current_if,
+                should_correct_existing=should_correct_existing,
+            ):
+                self.logger.info(
+                    f"[IFLookup] selected IF={selected_result.impact_factor}, source={selected_result.source_name}"
+                )
                 return
 
             # 优先使用 AI 模型方式获取影响因子（新方式）
@@ -495,11 +559,11 @@ class AnalysisPipeline:
             if not any((journal_name, paper_info.raw_issn, paper_info.raw_eissn)):
                 return
 
-            resolution = journal_resolution or self._resolve_journal_metadata(paper_data)
+            resolution = resolution or self._resolve_journal_metadata(paper_data)
             if resolution is None:
                 return
 
-            candidate = self._select_journal_candidate(resolution, journal_name)
+            candidate = candidate or self._select_journal_candidate(resolution, journal_name)
 
             if not candidate:
                 paper_info.impact_factor_source = "MJL_RESOLVER"
@@ -509,48 +573,267 @@ class AnalysisPipeline:
             if not fetch_official_impact_factor:
                 return
 
-            fetch_result = self.if_fetcher.lookup(candidate)
-            if (
-                self._should_try_secondary_if_sources(fetch_result)
-                and self.search_crawler_fetcher is not None
-            ):
-                fetch_result = self.search_crawler_fetcher.lookup(
-                    journal_title=paper_info.journal_name or paper_info.raw_journal_title,
-                    issn=paper_info.matched_issn or paper_info.raw_issn,
-                    eissn=paper_info.raw_eissn,
-                )
-            if (
-                self._should_try_secondary_if_sources(fetch_result)
-                and self.wos_if_fetcher is not None
-            ):
-                fetch_result = self.wos_if_fetcher.lookup(
-                    journal_title=paper_info.journal_name or paper_info.raw_journal_title,
-                    issn=paper_info.matched_issn or paper_info.raw_issn,
-                    eissn=paper_info.raw_eissn,
-                )
-            paper_info.impact_factor_source = fetch_result.source_name
-            paper_info.impact_factor_status = fetch_result.status
-
-            if fetch_result.source_url:
-                paper_info.journal_profile_url = fetch_result.source_url
-
-            if fetch_result.status != "OK" or fetch_result.impact_factor is None:
+            fetch_result = self._select_best_secondary_result(secondary_results)
+            if fetch_result is None:
                 return
-
-            paper_info.impact_factor_year = fetch_result.year
-
-            if current_if is None or current_if <= 0:
-                paper_info.impact_factor = fetch_result.impact_factor
-                return
-
-            if current_if < 0.1 or current_if > 200:
-                paper_info.impact_factor = fetch_result.impact_factor
-                return
-
-            if should_correct_existing and abs(current_if - fetch_result.impact_factor) >= 0.5:
-                paper_info.impact_factor = fetch_result.impact_factor
+            self._apply_impact_factor_result(
+                paper_info,
+                fetch_result,
+                current_if=current_if,
+                should_correct_existing=should_correct_existing,
+            )
         except Exception as e:
             self.logger.warning(f"[IFLookup] failed: {e}")
+
+    def _lookup_secondary_impact_factor_results(
+        self,
+        *,
+        paper_info,
+        candidate,
+        fetch_official_impact_factor: bool,
+    ) -> List[ImpactFactorLookupResult]:
+        results: List[ImpactFactorLookupResult] = []
+
+        if fetch_official_impact_factor and self.if_fetcher is not None:
+            if candidate is not None:
+                try:
+                    results.append(self.if_fetcher.lookup(candidate))
+                except Exception as e:
+                    self.logger.warning(f"[IFLookup] MJL lookup failed: {e}")
+            try:
+                results.append(
+                    self.if_fetcher.lookup_by_title(paper_info.journal_name or paper_info.raw_journal_title)
+                )
+            except Exception as e:
+                self.logger.warning(f"[IFLookup] curated fallback lookup failed: {e}")
+
+        if self.search_crawler_fetcher is not None:
+            try:
+                results.append(
+                    self.search_crawler_fetcher.lookup(
+                        journal_title=paper_info.journal_name or paper_info.raw_journal_title,
+                        issn=paper_info.matched_issn or paper_info.raw_issn,
+                        eissn=paper_info.raw_eissn,
+                    )
+                )
+            except Exception as e:
+                self.logger.warning(f"[IFLookup] search crawler lookup failed: {e}")
+
+        if self.wos_if_fetcher is not None:
+            try:
+                results.append(
+                    self.wos_if_fetcher.lookup(
+                        journal_title=paper_info.journal_name or paper_info.raw_journal_title,
+                        issn=paper_info.matched_issn or paper_info.raw_issn,
+                        eissn=paper_info.raw_eissn,
+                    )
+                )
+            except Exception as e:
+                self.logger.warning(f"[IFLookup] WOS lookup failed: {e}")
+
+        return results
+
+    def _select_validated_impact_factor_result(
+        self,
+        *,
+        letpub_result: Optional[ImpactFactorLookupResult],
+        secondary_results: List[ImpactFactorLookupResult],
+        tolerance: float,
+    ) -> Optional[ImpactFactorLookupResult]:
+        valid_secondaries = [
+            result
+            for result in secondary_results
+            if getattr(result, "status", None) == "OK" and getattr(result, "impact_factor", None) is not None
+        ]
+
+        if letpub_result and letpub_result.status == "OK" and letpub_result.impact_factor is not None:
+            matched_secondaries = [
+                result
+                for result in valid_secondaries
+                if abs(result.impact_factor - letpub_result.impact_factor) <= tolerance
+            ]
+            if matched_secondaries:
+                return self._merge_impact_factor_results(
+                    primary=letpub_result,
+                    validators=matched_secondaries,
+                    status="OK_VALIDATED",
+                )
+
+            authoritative_secondaries = [
+                result for result in valid_secondaries if self._is_authoritative_if_source(result.source_name)
+            ]
+            authoritative_consensus = self._select_consensus_secondary_result(
+                authoritative_secondaries,
+                tolerance=tolerance,
+            )
+            if authoritative_consensus:
+                return self._merge_impact_factor_results(
+                    primary=authoritative_consensus,
+                    validators=[letpub_result],
+                    status="OK_VALIDATED_SECONDARY",
+                )
+
+            consensus_secondary = self._select_consensus_secondary_result(
+                valid_secondaries,
+                tolerance=tolerance,
+            )
+            if consensus_secondary:
+                return self._merge_impact_factor_results(
+                    primary=consensus_secondary,
+                    validators=[letpub_result],
+                    status="OK_VALIDATED_SECONDARY",
+                )
+
+            return self._merge_impact_factor_results(
+                primary=letpub_result,
+                validators=valid_secondaries,
+                status="OK_LETPUB_UNCONFIRMED" if valid_secondaries else "OK_LETPUB_ONLY",
+            )
+
+        consensus_secondary = self._select_consensus_secondary_result(
+            valid_secondaries,
+            tolerance=tolerance,
+        )
+        if consensus_secondary:
+            return self._merge_impact_factor_results(
+                primary=consensus_secondary,
+                validators=[result for result in valid_secondaries if result is not consensus_secondary],
+                status="OK_SECONDARY_VALIDATED",
+            )
+
+        return self._select_best_secondary_result(valid_secondaries)
+
+    def _select_consensus_secondary_result(
+        self,
+        results: List[ImpactFactorLookupResult],
+        *,
+        tolerance: float,
+    ) -> Optional[ImpactFactorLookupResult]:
+        if len(results) < 2:
+            return None
+
+        for base in sorted(results, key=self._impact_factor_result_sort_key):
+            matches = [
+                result
+                for result in results
+                if abs(result.impact_factor - base.impact_factor) <= tolerance
+            ]
+            if len(matches) >= 2:
+                return self._merge_impact_factor_results(
+                    primary=base,
+                    validators=[result for result in matches if result is not base],
+                    status="OK_VALIDATED",
+                )
+        return None
+
+    def _merge_impact_factor_results(
+        self,
+        *,
+        primary: ImpactFactorLookupResult,
+        validators: List[ImpactFactorLookupResult],
+        status: str,
+    ) -> ImpactFactorLookupResult:
+        ordered = [primary, *validators]
+        source_name = "+".join(dict.fromkeys(result.source_name for result in ordered if result.source_name))
+        source_url = next((result.source_url for result in ordered if result.source_url), "")
+        year = next((result.year for result in ordered if result.year), primary.year)
+        return ImpactFactorLookupResult(
+            status=status,
+            source_name=source_name or primary.source_name,
+            source_url=source_url or primary.source_url,
+            impact_factor=primary.impact_factor,
+            year=year,
+            error_message=primary.error_message,
+        )
+
+    def _select_best_secondary_result(
+        self,
+        results: List[ImpactFactorLookupResult],
+    ) -> Optional[ImpactFactorLookupResult]:
+        valid_results = [
+            result
+            for result in results
+            if getattr(result, "status", None) == "OK" and getattr(result, "impact_factor", None) is not None
+        ]
+        if not valid_results:
+            return None
+        return sorted(valid_results, key=self._impact_factor_result_sort_key)[0]
+
+    @staticmethod
+    def _impact_factor_result_sort_key(result: ImpactFactorLookupResult) -> tuple[int, int, float]:
+        return (
+            AnalysisPipeline._impact_factor_source_priority(result.source_name),
+            -(result.year or 0),
+            -(result.impact_factor or 0.0),
+        )
+
+    @staticmethod
+    def _impact_factor_source_priority(source_name: Optional[str]) -> int:
+        priorities = {
+            "WOS_JOURNALS_API": 0,
+            "MJL_PROFILE_API": 1,
+            "CURATED_FALLBACK": 2,
+            "SEARCH_CRAWLER": 3,
+            "LETPUB": 4,
+        }
+        return priorities.get(source_name or "", 9)
+
+    @staticmethod
+    def _is_authoritative_if_source(source_name: Optional[str]) -> bool:
+        return (source_name or "") in {"WOS_JOURNALS_API", "MJL_PROFILE_API", "CURATED_FALLBACK"}
+
+    @staticmethod
+    def _apply_impact_factor_result(
+        paper_info,
+        fetch_result: Any,
+        *,
+        current_if: Optional[float],
+        should_correct_existing: bool,
+    ) -> bool:
+        source_url = getattr(fetch_result, "source_url", None)
+        if source_url:
+            paper_info.journal_profile_url = source_url
+
+        result_status = getattr(fetch_result, "status", None) or ""
+        new_source_name = getattr(fetch_result, "source_name", None)
+        impact_factor = getattr(fetch_result, "impact_factor", None)
+        if not str(result_status).startswith("OK") or impact_factor is None:
+            return False
+
+        if (
+            current_if is not None
+            and abs(current_if - impact_factor) < 1e-6
+            and paper_info.impact_factor_source
+            and new_source_name
+        ):
+            combined_sources = "+".join(
+                dict.fromkeys(
+                    source
+                    for source in [*paper_info.impact_factor_source.split("+"), *new_source_name.split("+")]
+                    if source
+                )
+            )
+            paper_info.impact_factor_source = combined_sources
+        else:
+            paper_info.impact_factor_source = new_source_name
+
+        if not (paper_info.impact_factor_status and str(paper_info.impact_factor_status).startswith("OK_VALIDATED")):
+            paper_info.impact_factor_status = result_status
+
+        paper_info.impact_factor_year = getattr(fetch_result, "year", None)
+
+        if current_if is None or current_if <= 0:
+            paper_info.impact_factor = impact_factor
+            return True
+
+        if current_if < 0.1 or current_if > 200:
+            paper_info.impact_factor = impact_factor
+            return True
+
+        if should_correct_existing and abs(current_if - impact_factor) >= 0.5:
+            paper_info.impact_factor = impact_factor
+
+        return True
 
     @staticmethod
     def _should_try_secondary_if_sources(fetch_result: Any) -> bool:

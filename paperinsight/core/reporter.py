@@ -4,6 +4,7 @@
 """
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
@@ -13,6 +14,9 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+
+
+logger = logging.getLogger("paperinsight.reporter")
 
 
 class ReportGenerator:
@@ -202,7 +206,7 @@ class ReportGenerator:
         
         # 保存
         wb.save(output_path)
-        print(f"[Report] Excel report saved: {output_path}")
+        logger.info(f"[Report] Excel report saved: {output_path}")
         
         return output_path
     
@@ -285,8 +289,8 @@ class ReportGenerator:
         
         with output_path.open("w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
-        
-        print(f"[Report] JSON report saved: {output_path}")
+
+        logger.info(f"[Report] JSON report saved: {output_path}")
         
         return output_path
     
@@ -330,8 +334,8 @@ class ReportGenerator:
                     f.write(f"Context: {error['context']}\n")
                 f.write("-" * 70 + "\n\n")
         
-        print(f"[ErrorLog] saved: {output_path}")
-        
+        logger.info(f"[ErrorLog] saved: {output_path}")
+
         return output_path
 
     def _get_mapped_value(self, result: dict, field_key: str):

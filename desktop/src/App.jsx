@@ -64,6 +64,11 @@ function setNestedValue(obj, path, value) {
   return next;
 }
 
+function defaultOutputDir(pdfDir) {
+  const normalized = `${pdfDir || ''}`.trim();
+  return normalized ? `${normalized}/output` : '';
+}
+
 function formatProviderLabel(provider) {
   const mapping = {
     longcat: 'Longcat',
@@ -316,6 +321,9 @@ function buildLogLine(event) {
   if (event.type === 'failed') {
     return event.message;
   }
+  if (event.type === 'process-exit') {
+    return event.code === 0 ? '后台进程已结束' : `后台进程异常退出（${event.code}）`;
+  }
   return `${event.type}`;
 }
 
@@ -350,7 +358,7 @@ function maskedStatus(value, configuredLabel = '已填写', emptyLabel = '未填
 
 function buildGettingStartedSteps(config, env, runOptions, onboardingCompleted) {
   const pdfDir = String(runOptions.pdfDir || '').trim();
-  const outputDir = String(runOptions.outputDir || '').trim();
+  const outputDir = String(runOptions.outputDir || defaultOutputDir(pdfDir)).trim();
   const hasApiKey = hasLlmCredentials(config);
   const mineruEnabled = Boolean(getNestedValue(config, 'mineru.enabled', true));
   const mineruMode = getNestedValue(config, 'mineru.mode', 'api');
@@ -564,7 +572,7 @@ function buildRunSummary(config, env, runOptions) {
   const mineruMode = getNestedValue(config, 'mineru.mode', 'api');
   return [
     ['论文目录', displayValue(runOptions.pdfDir, '未选择')],
-    ['输出目录', displayValue(runOptions.outputDir || (runOptions.pdfDir ? `${runOptions.pdfDir}/输出结果` : ''), '未设置')],
+    ['输出目录', displayValue(runOptions.outputDir || defaultOutputDir(runOptions.pdfDir), '未设置')],
     ['处理模式', modeLabel(runOptions.mode)],
     ['LLM 服务', `${provider} / ${displayValue(getNestedValue(config, 'llm.model', ''), '未设置模型')}`],
     ['MinerU', mineruEnabled ? `已启用（${mineruMode === 'api' ? '云端 API' : '本地 CLI'}）` : '未启用'],
@@ -948,7 +956,7 @@ export default function App() {
               total: event.total,
               completed: 0,
               currentFile: '',
-              outputDir: event.outputDir,
+              outputDir: event.outputDir || current.outputDir,
               launch: event.launch,
               logs: nextLogs,
               stats: null
@@ -981,6 +989,8 @@ export default function App() {
               status: event.stats.status === 'no_files' ? 'idle' : 'completed',
               completed: event.stats.pdfCount,
               total: event.stats.pdfCount,
+              currentFile: '',
+              outputDir: event.outputDir || current.outputDir,
               stats: event.stats,
               logs: nextLogs
             };
@@ -991,6 +1001,23 @@ export default function App() {
               ...current,
               running: false,
               status: event.type === 'failed' ? 'failed' : 'cancelled',
+              logs: nextLogs
+            };
+          }
+
+          if (event.type === 'process-exit') {
+            if (!current.running) {
+              return {
+                ...current,
+                logs: nextLogs
+              };
+            }
+
+            return {
+              ...current,
+              running: false,
+              status: event.code === 0 && current.completed >= current.total ? 'completed' : 'failed',
+              currentFile: '',
               logs: nextLogs
             };
           }
@@ -1081,7 +1108,7 @@ export default function App() {
     setRunOptions((current) => ({
       ...current,
       [target]: selected,
-      ...(target === 'pdfDir' && !current.outputDir ? { outputDir: `${selected}/输出结果` } : {})
+      ...(target === 'pdfDir' && !current.outputDir ? { outputDir: defaultOutputDir(selected) } : {})
     }));
   }
 
@@ -1234,6 +1261,7 @@ export default function App() {
 
   async function startAnalysis() {
     setRunConfirmVisible(false);
+    const effectiveOutputDir = runOptions.outputDir || defaultOutputDir(runOptions.pdfDir);
 
     if (!runOptions.pdfDir) {
       setJob((current) => ({
@@ -1252,13 +1280,14 @@ export default function App() {
       currentFile: '',
       logs: [],
       stats: null,
-      outputDir: runOptions.outputDir,
+      outputDir: effectiveOutputDir,
       launch: null
     });
 
     try {
       await window.paperInsight.startAnalysis({
         ...runOptions,
+        outputDir: effectiveOutputDir,
         engine: getNestedValue(config, 'desktop.engine', {})
       });
     } catch (error) {
@@ -1329,6 +1358,25 @@ export default function App() {
   const analysisGuard = buildAnalysisGuard(config, env, runOptions, onboardingCompleted);
   const canStartAnalysis = analysisGuard.blockingIssues.length === 0;
   const runSummary = buildRunSummary(config, env, runOptions);
+  const jobStatusLabel = job.running
+    ? '正在执行'
+    : job.status === 'completed'
+      ? '已完成'
+      : job.status === 'failed'
+        ? '执行失败'
+        : job.status === 'cancelled'
+          ? '已取消'
+          : job.status === 'preparing'
+            ? '准备启动'
+            : '待启动';
+  const jobStatusHint = job.currentFile
+    || (job.status === 'failed'
+      ? '请查看下方日志定位异常。'
+      : job.status === 'completed'
+        ? '全部任务已完成。'
+        : job.status === 'cancelled'
+          ? '任务已取消。'
+          : '等待任务开始');
   const overallStatus = analysisGuard.blockingIssues.length
     ? {
         tone: 'danger',
@@ -1658,7 +1706,7 @@ export default function App() {
                     <input
                       value={runOptions.outputDir}
                       onChange={(event) => setRunOptions((current) => ({ ...current, outputDir: event.target.value }))}
-                      placeholder="默认写入 论文目录/输出结果"
+                      placeholder="默认写入 论文目录/output"
                     />
                     <button onClick={() => chooseDirectory('outputDir')}>选择目录</button>
                   </div>
@@ -1715,11 +1763,11 @@ export default function App() {
                     )}
                   </div>
                 </div>
-                <div className="progress-block">
-                  <div className="progress-meta">
-                    <strong>{job.running ? '正在执行' : job.status === 'completed' ? '已完成' : '待启动'}</strong>
-                    <span>{job.currentFile || '等待任务开始'}</span>
-                  </div>
+                  <div className="progress-block">
+                    <div className="progress-meta">
+                      <strong>{jobStatusLabel}</strong>
+                      <span>{jobStatusHint}</span>
+                    </div>
                   <div className="progress-track">
                     <div className="progress-bar" style={{ width: `${progressPercent}%` }} />
                   </div>

@@ -113,6 +113,16 @@ class DataExtractor:
         r"\bPhysical\s+Review\s+(?:Letters|Applied)\b",
     ]
 
+    TITLE_STOP_PATTERNS = [
+        r"^(?:abstract|a\s*b\s*s\s*t\s*r\s*a\s*c\s*t)\b",
+        r"^(?:keywords?|key words?)\b",
+        r"^(?:article info|a\s*r\s*t\s*i\s*c\s*l\s*e\s*i\s*n\s*f\s*o)\b",
+        r"^(?:introduction|results(?: and discussion)?|experimental(?: section)?|materials?(?: and methods?)?)\b",
+        r"^(?:received|accepted|published|available online|copyright)\b",
+        r"^(?:doi|https?://|www\.)\b",
+        r"^(?:corresponding author|e-?mail)\b",
+    ]
+
     def __init__(
         self,
         config: Optional[Dict[str, Any]] = None,
@@ -426,10 +436,10 @@ class DataExtractor:
             return paper_data
 
         except ValidationError as e:
-            print(f"[ValidationFailed] {e}")
+            self.logger.warning(f"[ValidationFailed] {e}")
             return None
         except Exception as e:
-            print(f"[ParseFailed] {e}")
+            self.logger.warning(f"[ParseFailed] {e}")
             return None
 
     def _extract_with_regex(
@@ -502,6 +512,15 @@ class DataExtractor:
     ) -> PaperData:
         paper_info = paper_data.paper_info
         raw_journal_title, raw_issn, raw_eissn = self._extract_raw_journal_metadata(text, parse_result)
+        extracted_title = self._extract_title(text, parse_result)
+
+        normalized_existing_title = self._normalize_title_candidate(paper_info.title)
+        if extracted_title and (
+            not normalized_existing_title or self._is_bad_title_candidate(normalized_existing_title)
+        ):
+            paper_info.title = extracted_title
+        elif normalized_existing_title and normalized_existing_title != paper_info.title:
+            paper_info.title = normalized_existing_title
 
         if raw_journal_title and not paper_info.raw_journal_title:
             paper_info.raw_journal_title = raw_journal_title
@@ -611,19 +630,171 @@ class DataExtractor:
 
     def _extract_title(self, text: str, parse_result: Optional[ParseResult]) -> Optional[str]:
         """提取论文标题"""
-        # 从解析结果获取
-        if parse_result and parse_result.metadata.get("title"):
-            return parse_result.metadata["title"]
+        metadata_candidates: List[str] = []
+        if parse_result:
+            metadata_candidates.extend(
+                filter(
+                    None,
+                    [
+                        self._coerce_metadata_value(parse_result.metadata.get("title")),
+                        self._coerce_metadata_value(parse_result.metadata.get("dc:title")),
+                    ],
+                )
+            )
+            source_metadata = self._extract_pdf_metadata_from_source(parse_result)
+            metadata_candidates.extend(
+                filter(
+                    None,
+                    [
+                        self._coerce_metadata_value(source_metadata.get("title")),
+                        self._coerce_metadata_value(source_metadata.get("subject")),
+                    ],
+                )
+            )
 
-        # 从文本前几行提取
-        lines = text.split("\n")[:20]
-        for line in lines:
-            line = line.strip()
-            # 标题通常较长且不含特殊字符
-            if 30 < len(line) < 200 and not any(c in line for c in ["@", "http", "www"]):
-                return line
+        for candidate in metadata_candidates:
+            normalized = self._normalize_title_candidate(candidate)
+            if normalized and not self._is_bad_title_candidate(normalized):
+                return normalized
+
+        line_candidates = self._extract_title_candidates_from_lines(parse_result, text)
+        if line_candidates:
+            return line_candidates[0]
 
         return None
+
+    def _extract_title_candidates_from_lines(
+        self,
+        parse_result: Optional[ParseResult],
+        text: str,
+    ) -> List[str]:
+        line_sources: List[str] = []
+        if parse_result and parse_result.markdown:
+            line_sources.append(parse_result.markdown)
+        if parse_result and parse_result.raw_text:
+            line_sources.append(parse_result.raw_text)
+        if text:
+            line_sources.append(text)
+
+        candidates: List[tuple[int, str]] = []
+        seen: set[str] = set()
+
+        for source in line_sources:
+            lines = source.splitlines()[:40]
+            filtered = [self._normalize_title_candidate(line) for line in lines]
+            filtered = [line for line in filtered if line]
+
+            for index, line in enumerate(filtered[:20]):
+                if self._is_bad_title_candidate(line):
+                    continue
+                score = self._score_title_candidate(line, index=index, heading_hint=lines[index].lstrip().startswith("#") if index < len(lines) else False)
+                if score <= 0 or line in seen:
+                    continue
+                seen.add(line)
+                candidates.append((score, line))
+
+            for block in self._build_title_blocks(filtered[:8]):
+                if block in seen or self._is_bad_title_candidate(block):
+                    continue
+                score = self._score_title_candidate(block, index=0, heading_hint=True) + 2
+                if score > 0:
+                    seen.add(block)
+                    candidates.append((score, block))
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return [candidate for _, candidate in candidates]
+
+    def _build_title_blocks(self, lines: List[str]) -> List[str]:
+        blocks: List[str] = []
+        current: List[str] = []
+
+        for line in lines:
+            if self._is_bad_title_candidate(line):
+                if current:
+                    break
+                continue
+            if len(current) >= 3:
+                break
+            current.append(line)
+            joined = " ".join(current).strip()
+            if 20 <= len(joined) <= 260:
+                blocks.append(joined)
+        return blocks
+
+    def _normalize_title_candidate(self, value: Optional[str]) -> Optional[str]:
+        if value in (None, ""):
+            return None
+
+        candidate = str(value).strip()
+        candidate = re.sub(r"^[#*\-\s]+", "", candidate)
+        candidate = re.sub(r"\s+", " ", candidate).strip(" \"'`|")
+        candidate = re.sub(r"^(?:title|article title)\s*[:\-]\s*", "", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\s*\[[^\]]+\]\s*$", "", candidate).strip()
+        candidate = re.sub(r"\s*\(\s*(?:article|review|communication)\s*\)\s*$", "", candidate, flags=re.IGNORECASE).strip()
+        candidate = re.sub(r"\s*doi\s*:\s*10\.\S+$", "", candidate, flags=re.IGNORECASE).strip(" ,.;")
+        candidate = re.sub(r"\s*[•·]\s*$", "", candidate).strip()
+        return candidate or None
+
+    def _is_bad_title_candidate(self, candidate: str) -> bool:
+        lowered = candidate.lower().strip()
+        if not lowered:
+            return True
+        if len(candidate) < 20 or len(candidate) > 260:
+            return True
+        if any(re.match(pattern, lowered, re.IGNORECASE) for pattern in self.TITLE_STOP_PATTERNS):
+            return True
+        if "@" in candidate or "http" in lowered or "www." in lowered:
+            return True
+        if lowered.endswith(".pdf"):
+            return True
+        if re.fullmatch(r"[a-z]\s*(?:[a-z]\s*){4,}", lowered):
+            return True
+        if re.search(r"\b(?:university|college|institute|school|laboratory|department)\b", lowered):
+            return True
+        if re.fullmatch(
+            r"(?:[A-Z][a-zA-Z'`-]+(?:\s+[A-Z][a-zA-Z'`-]+){0,2}\s*[,*]?\s*){3,}",
+            candidate,
+        ):
+            return True
+        if candidate.count(",") >= 3 and not re.search(r"[:;]", candidate):
+            return True
+        if re.search(r"\b(?:figure|table)\s+\d+\b", lowered):
+            return True
+        if re.search(r"\b(?:orcid|supporting information)\b", lowered):
+            return True
+        if re.search(r"\b(?:j\.\s*[a-z]|adv\.|nano lett\.|chem\.)\b", lowered) and len(candidate.split()) <= 6:
+            return True
+        if sum(ch.isdigit() for ch in candidate) > max(4, len(candidate) // 8):
+            return True
+        return False
+
+    def _score_title_candidate(self, candidate: str, *, index: int, heading_hint: bool) -> int:
+        score = 0
+        word_count = len(candidate.split())
+        alpha_count = sum(ch.isalpha() for ch in candidate)
+        upper_ratio = sum(ch.isupper() for ch in candidate if ch.isalpha()) / max(alpha_count, 1)
+
+        if heading_hint:
+            score += 5
+        if index == 0:
+            score += 4
+        elif index <= 2:
+            score += 2
+
+        if 6 <= word_count <= 28:
+            score += 4
+        if 40 <= len(candidate) <= 180:
+            score += 4
+        if alpha_count >= max(20, len(candidate) * 0.45):
+            score += 3
+        if upper_ratio < 0.45:
+            score += 2
+        if ":" in candidate:
+            score += 1
+        if candidate.endswith("."):
+            score -= 2
+
+        return score
 
     def _extract_authors(self, text: str, parse_result: Optional[ParseResult]) -> Optional[str]:
         """提取作者"""
