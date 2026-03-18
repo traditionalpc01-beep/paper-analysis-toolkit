@@ -113,7 +113,8 @@ jobs:
         shell: pwsh
         run: |
           $configFile = Join-Path $env:RUNNER_TEMP "NuGet.config"
-          nuget push "package/out/*.nupkg" `
+          $packageFile = (Get-ChildItem "package/out/*.nupkg" | Select-Object -First 1).FullName
+          nuget push $packageFile `
             -Source "github" `
             -ApiKey "${{ secrets.GITHUB_TOKEN }}" `
             -ConfigFile $configFile `
