@@ -96,6 +96,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "resolve_journal_metadata": True,
         "fetch_official_impact_factor": True,
         "correct_existing_impact_factor": True,
+        "use_ai_model_if": False,
+        "ai_model_if": {
+            "enabled": False,
+            "timeout": 60,
+            "headless": True,
+            "delay": 2.0,
+            "qianwen_api_key": "",
+            "kimi_api_key": "",
+        },
         "search_crawler": {
             "enabled": True,
             "market": "en-US",

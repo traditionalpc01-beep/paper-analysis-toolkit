@@ -24,6 +24,9 @@ pyyaml>=6.0
 # 网络请求
 requests>=2.31.0
 
+# HTML 解析（实验性 AI 影响因子获取模块）
+beautifulsoup4>=4.12.0
+
 # 进度展示
 tqdm>=4.66.0
 
@@ -44,13 +47,3 @@ python-dotenv>=1.0.0
 # 安装: pip install -r requirements.txt -r requirements-llm.txt
 
 # openai>=1.0.0
-
-# ============================================================
-# 开发依赖
-# ============================================================
-# 安装: pip install -r requirements.txt -r requirements-dev.txt
-
-# pytest>=7.0.0
-# black>=23.0.0
-# flake8>=6.0.0
-# mypy>=1.0.0

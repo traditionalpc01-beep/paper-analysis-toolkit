@@ -79,6 +79,7 @@ class DataExtractor:
         "nano lett.": "Nano Letters",
         "nano lett": "Nano Letters",
         "chem. mater.": "Chemistry of Materials",
+        "chem. mater": "Chemistry of Materials",
         "j. am. chem. soc.": "Journal of the American Chemical Society",
         "j am chem soc": "Journal of the American Chemical Society",
         "nat. commun.": "Nature Communications",

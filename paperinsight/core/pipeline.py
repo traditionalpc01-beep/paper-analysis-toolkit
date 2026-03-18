@@ -115,6 +115,20 @@ class AnalysisPipeline:
             if web_enabled and wos_config.get("enabled") and wos_api_key
             else None
         )
+        
+        # 初始化 AI 模型影响因子获取器（新方式）
+        ai_model_config = web_config.get("ai_model_if", {})
+        self.ai_model_if_fetcher = None
+        if web_enabled and ai_model_config.get("enabled", False):
+            try:
+                from paperinsight.web.ai_model_if_fetcher import AIModelImpactFactorFetcher
+                self.ai_model_if_fetcher = AIModelImpactFactorFetcher(
+                    timeout=int(ai_model_config.get("timeout", 30)),
+                    qianwen_api_key=ai_model_config.get("qianwen_api_key"),
+                    kimi_api_key=ai_model_config.get("kimi_api_key"),
+                )
+            except Exception as e:
+                self.logger.warning(f"[AI模型IF获取器] 初始化失败: {e}")
 
         # 初始化报告生成器
         self.reporter = ReportGenerator(self.output_dir)
@@ -441,16 +455,43 @@ class AnalysisPipeline:
         """补全影响因子。"""
         paper_info = paper_data.paper_info
         journal_name = paper_info.journal_name or paper_info.raw_journal_title
-        if not any((journal_name, paper_info.raw_issn, paper_info.raw_eissn)):
-            return
-
+        paper_title = paper_info.title
+        
         try:
             current_if = paper_info.impact_factor
             web_config = self.config.get("web_search", {})
             should_correct_existing = bool(web_config.get("correct_existing_impact_factor", True))
             fetch_official_impact_factor = bool(web_config.get("fetch_official_impact_factor", True))
+            use_ai_model_if = bool(web_config.get("use_ai_model_if", False))
 
             if current_if and not should_correct_existing and 0.1 <= current_if <= 200 and not fetch_official_impact_factor:
+                return
+
+            # 优先使用 AI 模型方式获取影响因子（新方式）
+            if use_ai_model_if and self.ai_model_if_fetcher:
+                self.logger.info(f"[IF搜索] 使用新方式查询: 期刊={journal_name}, 标题={paper_title[:30] if paper_title else 'N/A'}...")
+                try:
+                    # 传入期刊名称和论文标题
+                    fetch_result = self.ai_model_if_fetcher.lookup(
+                        paper_title=paper_title or "",
+                        journal_name=journal_name
+                    )
+                    if fetch_result.status == "OK" and fetch_result.impact_factor is not None:
+                        paper_info.impact_factor = fetch_result.impact_factor
+                        paper_info.impact_factor_source = fetch_result.source_name
+                        paper_info.impact_factor_status = "OK"
+                        if fetch_result.year:
+                            paper_info.impact_factor_year = fetch_result.year
+                        self.logger.info(f"[IF搜索] 新方式获取成功: IF={fetch_result.impact_factor}, 来源={fetch_result.source_name}")
+                        return
+                    else:
+                        self.logger.warning(f"[IF搜索] 新方式获取失败: {fetch_result.error_message}")
+                except Exception as e:
+                    self.logger.warning(f"[IF搜索] 新方式查询异常: {e}")
+                # 新方式失败，继续尝试原有方式
+
+            # 原有方式：通过期刊元数据获取
+            if not any((journal_name, paper_info.raw_issn, paper_info.raw_eissn)):
                 return
 
             resolution = journal_resolution or self._resolve_journal_metadata(paper_data)
@@ -469,7 +510,7 @@ class AnalysisPipeline:
 
             fetch_result = self.if_fetcher.lookup(candidate)
             if (
-                (fetch_result.status != "OK" or fetch_result.impact_factor is None)
+                self._should_try_secondary_if_sources(fetch_result)
                 and self.search_crawler_fetcher is not None
             ):
                 fetch_result = self.search_crawler_fetcher.lookup(
@@ -478,7 +519,7 @@ class AnalysisPipeline:
                     eissn=paper_info.raw_eissn,
                 )
             if (
-                (fetch_result.status != "OK" or fetch_result.impact_factor is None)
+                self._should_try_secondary_if_sources(fetch_result)
                 and self.wos_if_fetcher is not None
             ):
                 fetch_result = self.wos_if_fetcher.lookup(
@@ -509,6 +550,14 @@ class AnalysisPipeline:
                 paper_info.impact_factor = fetch_result.impact_factor
         except Exception as e:
             self.logger.warning(f"[IF搜索] 失败: {e}")
+
+    @staticmethod
+    def _should_try_secondary_if_sources(fetch_result: Any) -> bool:
+        status = getattr(fetch_result, "status", None)
+        impact_factor = getattr(fetch_result, "impact_factor", None)
+        if status == "OK" and impact_factor is not None:
+            return False
+        return status in {"ERROR", "NO_MATCH", "NOT_FOUND", "NOT_VISIBLE", "NO_QUERY"}
 
     def process_batch(
         self,

@@ -1,28 +1,22 @@
 # PaperInsight 配置示例
-# 请复制此文件为 config.yaml 并填入您的 API Key
+# 该文件按当前运行时代码 paperinsight/utils/config.py::DEFAULT_CONFIG 对齐整理。
+# 建议先运行 `paperinsight config` 生成 ~/.paperinsight/config.yaml，再按需参考本文件微调。
 
-# MinerU PDF 解析配置 (推荐)
-# 官方文档: https://mineru.net/apiManage/docs
-# GitHub: https://github.com/opendatalab/MinerU
 mineru:
   enabled: true
-  mode: "cli"  # 可选: "cli" (本地命令行) 或 "api" (云端API)
-  # CLI 模式: 需要安装 MinerU (pip install mineru)
-  # API 模式: 需要配置 token
-  token: ""  # API 模式必填，从 https://mineru.net 获取
-  api_url: "https://mineru.net/api/v4"  # API 根路径（默认 v4）
-  timeout: 600  # 解析超时时间（秒）
-  model_version: "vlm"  # 可选: pipeline / vlm / MinerU-HTML
-  output_format: "markdown"  # 输出格式: "markdown" 或 "json"
-  extract_tables: true  # 是否提取表格
-  method: "auto"  # 解析方法: "auto", "txt", "ocr"
+  mode: "api"  # api 或 cli
+  token: ""
+  api_url: "https://mineru.net/api/v4"
+  timeout: 600
+  model_version: "vlm"  # pipeline / vlm / MinerU-HTML
+  output_format: "markdown"
+  extract_tables: true
+  method: "auto"  # auto / txt / ocr
 
-# PaddleX API 配置 (百度AI Studio) - 作为 MinerU 的备选方案
-# 获取方式: https://aistudio.baidu.com/paddleocr/task
 paddlex:
   enabled: false
-  token: "your-paddlex-token"
-  model: "PaddleOCR-VL-1.5"  # 可选: PaddleOCR-VL-1.5, PaddleOCR-VL, PP-StructureV3, PP-OCRv5
+  token: ""
+  model: "PaddleOCR-VL-1.5"
   use_doc_orientation: false
   use_doc_unwarping: false
   use_layout_detection: true
@@ -30,38 +24,69 @@ paddlex:
   timeout: 300
   poll_interval: 5
 
-# LLM 配置
-# OpenAI: https://platform.openai.com/api-keys
-# DeepSeek: https://platform.deepseek.com/api_keys
 llm:
   enabled: true
-  provider: "longcat"  # 或 "openai" / "deepseek" / "wenxin"
-  api_key: "your-llm-api-key"
+  provider: "longcat"  # longcat / openai / deepseek / wenxin
+  api_key: ""
   model: "LongCat-Flash-Chat"
-  base_url: ""  # 可选
+  base_url: ""
   timeout: 120
+  max_retries: 3
+  wenxin:
+    client_id: ""
+    client_secret: ""
+    model: "ernie-4.0-8k"
+  deepseek:
+    model: "deepseek-chat"
+  openai:
+    model: "gpt-4o"
+    organization: ""
+  longcat:
+    model: "LongCat-Flash-Chat"
+    base_url: "https://api.longcat.chat/openai"
+    backfill_model: "LongCat-Flash-Lite"
+    enable_lite_backfill: true
 
-# Web 搜索配置
 web_search:
   enabled: true
   timeout: 30
+  resolve_journal_metadata: true
+  fetch_official_impact_factor: true
   correct_existing_impact_factor: true
+  use_ai_model_if: false
+  ai_model_if:
+    enabled: false
+    timeout: 60
+    headless: true
+    delay: 2.0
+    qianwen_api_key: ""
+    kimi_api_key: ""
+  search_crawler:
+    enabled: true
+    market: "en-US"
+  web_of_science:
+    enabled: false
+    api_key: ""
+    journals_api_url: "https://api.clarivate.com/apis/wos-journals/v1"
 
-# 缓存配置
 cache:
   enabled: true
   directory: ".cache"
+  max_age_days: 30
 
-# 输出配置
 output:
-  format: ["excel", "json"]
+  format: ["excel"]
   sort_by_if: true
   generate_error_log: true
   rename_pdfs: false
   rename_template: "[{year}_{impact_factor}_{journal}]_{title}.pdf"
-  bilingual_text: false  # 默认中文处理；每次运行前交互确认，启用后导出为“中文：...\nEnglish: ...”
+  include_source: true
+  bilingual_text: false
 
-# 文本清洗配置（v3.1 结构感知窗口过滤）
+pdf:
+  max_pages: 0
+  text_ratio_threshold: 0.1
+
 cleaner:
   enabled: true
   block_window: 1
@@ -84,7 +109,13 @@ cleaner:
     - "discussion"
     - "conclusion"
 
-# PDF 处理配置
-pdf:
-  max_pages: 0
-  text_ratio_threshold: 0.1
+desktop:
+  engine:
+    mode: "bundled"  # bundled / system_python
+    python_path: ""
+    backend_path: ""
+  ui:
+    last_pdf_dir: ""
+    last_output_dir: ""
+    remember_last_paths: true
+    onboarding_completed: false
