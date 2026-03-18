@@ -17,7 +17,7 @@ warnings.filterwarnings(
     message=r".*urllib3 .* doesn't match a supported version!.*",
 )
 
-__version__ = "3.0.2"
+__version__ = "3.0.3"
 __author__ = "WorkBuddy AI Assistant"
 
 __all__ = ["app", "__version__"]
