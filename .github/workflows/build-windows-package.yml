@@ -98,9 +98,11 @@ jobs:
         shell: pwsh
         run: |
           $configFile = Join-Path $env:RUNNER_TEMP "NuGet.config"
-          if (Test-Path $configFile) {
-            Remove-Item $configFile -Force
-          }
+          Set-Content -Path $configFile -Encoding UTF8 -Value @'
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+</configuration>
+'@
           nuget sources Add `
             -Name "github" `
             -Source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" `

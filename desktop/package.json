@@ -1,6 +1,6 @@
 {
   "name": "paperinsight-desktop",
-  "version": "3.0.4",
+  "version": "3.0.5",
   "private": true,
   "description": "PaperInsight desktop app built with React and Electron",
   "main": "electron/main.js",
