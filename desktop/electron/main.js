@@ -190,6 +190,31 @@ function emitAnalysisEvent(payload) {
   }
 }
 
+function validateAnalysisPayload(payload = {}) {
+  const pdfDir = `${payload?.pdfDir || ''}`.trim();
+  const outputDir = `${payload?.outputDir || ''}`.trim();
+
+  if (!pdfDir) {
+    throw new Error('请先选择包含 PDF 的目录。');
+  }
+
+  if (!fs.existsSync(pdfDir) || !fs.statSync(pdfDir).isDirectory()) {
+    throw new Error(`输入目录不存在，请重新选择：${pdfDir}`);
+  }
+
+  if (!outputDir) {
+    return;
+  }
+
+  if (fs.existsSync(outputDir) && !fs.statSync(outputDir).isDirectory()) {
+    throw new Error(`输出路径不是目录，请重新选择：${outputDir}`);
+  }
+
+  if (path.resolve(outputDir) === path.resolve(pdfDir)) {
+    throw new Error('输出目录不能与论文目录相同。');
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1480,
@@ -254,12 +279,15 @@ ipcMain.handle('analysis:start', async (_event, payload) => {
     throw new Error('当前已有任务在运行，请先等待其完成或手动取消。');
   }
 
+  validateAnalysisPayload(payload);
+
   return new Promise((resolve, reject) => {
     const { child, launch } = spawnBackend('analyze', payload, payload?.engine || {});
     activeAnalysisProcess = child;
     let stdoutBuffer = '';
     let stderrBuffer = '';
     let started = false;
+    let sawTerminalEvent = false;
 
     child.stdout.on('data', (chunk) => {
       stdoutBuffer += chunk.toString('utf8');
@@ -271,6 +299,9 @@ ipcMain.handle('analysis:start', async (_event, payload) => {
         }
         try {
           const event = JSON.parse(line);
+          if (['completed', 'failed', 'cancelled'].includes(event.type)) {
+            sawTerminalEvent = true;
+          }
           emitAnalysisEvent({ ...event, launch });
           if (!started && ['started', 'completed', 'failed'].includes(event.type)) {
             started = true;
@@ -309,7 +340,9 @@ ipcMain.handle('analysis:start', async (_event, payload) => {
           : `Analysis process exited unexpectedly with code ${code}`));
         return;
       }
-      emitAnalysisEvent({ type: 'process-exit', code });
+      if (!sawTerminalEvent) {
+        emitAnalysisEvent({ type: 'process-exit', code });
+      }
     });
   });
 });
