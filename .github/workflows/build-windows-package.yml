@@ -93,14 +93,34 @@ jobs:
             -OutputDirectory "package/out" `
             -Properties $properties
 
+      - name: Configure NuGet source
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $configFile = Join-Path $env:RUNNER_TEMP "NuGet.config"
+          if (Test-Path $configFile) {
+            Remove-Item $configFile -Force
+          }
+          nuget sources Add `
+            -Name "github" `
+            -Source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" `
+            -Username "${{ github.actor }}" `
+            -Password "${{ secrets.GITHUB_TOKEN }}" `
+            -StorePasswordInClearText `
+            -ConfigFile $configFile `
+            -NonInteractive
+
       - name: Publish GitHub Package
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
+          $configFile = Join-Path $env:RUNNER_TEMP "NuGet.config"
           nuget push "package/out/*.nupkg" `
-            -Source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" `
+            -Source "github" `
             -ApiKey "${{ secrets.GITHUB_TOKEN }}" `
-            -SkipDuplicate
+            -ConfigFile $configFile `
+            -SkipDuplicate `
+            -NonInteractive
 
       - name: Publish release assets
         if: startsWith(github.ref, 'refs/tags/v')
