@@ -17,3 +17,5 @@
 - 质量门禁、回归约束与检查脚本 -> 查看 `docs/QUALITY_GATES.md`、`scripts/check_agent_harness.py`
 - 已知缺口、尚未机械化的知识与风险 -> 查看 `docs/KNOWN_GAPS.md`
 - 回归标准、验收样例与边界行为 -> 查看 `tests/`
+
+- Agent-first prepare run ?????MinerU Markdown ?????IDE ?????? -> ??? `docs/AGENTFLOW.md`??paperinsight/agentflow/`

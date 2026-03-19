@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, List
 
 import requests
+from requests import exceptions as requests_exceptions
 
 from paperinsight.parser.base import BaseParser, ParseResult, TableData, Section
 
@@ -68,6 +69,11 @@ class MinerUParser(BaseParser):
         self.model_version = self.config.get("model_version", "vlm")
         self.language = self.config.get("language")
         self.no_cache = self.config.get("no_cache", False)
+        self.download_retries = max(1, int(self.config.get("download_retries", 3)))
+        self.download_backoff = float(self.config.get("download_backoff", 1.5))
+        self.allow_insecure_result_download = bool(
+            self.config.get("allow_insecure_result_download", True)
+        )
 
     @property
     def name(self) -> str:
@@ -512,11 +518,7 @@ class MinerUParser(BaseParser):
         if not full_zip_url:
             raise RuntimeError(f"Task completed but `full_zip_url` is missing: {extract_result}")
 
-        archive_response = requests.get(full_zip_url, timeout=self.timeout)
-        if archive_response.status_code != 200:
-            raise RuntimeError(
-                f"下载结果压缩包失败: HTTP {archive_response.status_code} {archive_response.text[:300]}"
-            )
+        archive_response = self._download_result_archive(full_zip_url)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             extract_dir = Path(temp_dir)
@@ -549,6 +551,53 @@ class MinerUParser(BaseParser):
         payload = self._build_api_common_payload()
         payload["files"] = [self._build_api_file_item(file_path)]
         return payload
+
+    def _download_result_archive(self, full_zip_url: str) -> requests.Response:
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, self.download_retries + 1):
+            try:
+                response = self._safe_requests_get(full_zip_url, timeout=self.timeout)
+                if response.status_code == 200:
+                    return response
+                last_error = RuntimeError(
+                    f"下载结果压缩包失败: HTTP {response.status_code} {response.text[:300]}"
+                )
+            except requests_exceptions.SSLError as exc:
+                last_error = exc
+            except requests_exceptions.RequestException as exc:
+                last_error = exc
+
+            if attempt < self.download_retries:
+                time.sleep(self.download_backoff * attempt)
+
+        if self.allow_insecure_result_download and self._looks_like_ssl_eof(last_error):
+            response = self._safe_requests_get(full_zip_url, timeout=self.timeout, verify=False)
+            if response.status_code == 200:
+                return response
+            last_error = RuntimeError(
+                f"下载结果压缩包失败(verify=False): HTTP {response.status_code} {response.text[:300]}"
+            )
+
+        if isinstance(last_error, RuntimeError):
+            raise last_error
+        raise RuntimeError(f"下载结果压缩包失败: {last_error}")
+
+    @staticmethod
+    def _looks_like_ssl_eof(error: Optional[Exception]) -> bool:
+        if error is None:
+            return False
+        if isinstance(error, requests_exceptions.SSLError):
+            return True
+        return "EOF occurred in violation of protocol" in str(error)
+
+    @staticmethod
+    def _safe_requests_get(url: str, **kwargs) -> requests.Response:
+        try:
+            return requests.get(url, **kwargs)
+        except TypeError:
+            kwargs.pop("verify", None)
+            return requests.get(url, **kwargs)
 
     def _parse_api_response(self, response: requests.Response, action: str) -> Dict[str, Any]:
         """统一解析 MinerU API 响应。"""

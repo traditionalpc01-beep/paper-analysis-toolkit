@@ -2,9 +2,12 @@ import io
 import zipfile
 import builtins
 
+import requests
+
 from paperinsight.core.extractor import DataExtractor
 from paperinsight.llm.base import BaseLLM
 from paperinsight.llm.longcat_client import LongcatClient
+from paperinsight.parser.base import ParseResult
 from paperinsight.parser.mineru import MinerUParser
 
 
@@ -384,3 +387,46 @@ def test_mineru_parser_parse_batch_uses_batch_api(monkeypatch, tmp_path):
     assert len(post_calls[0]["json"]["files"]) == 2
     assert put_calls == ["https://upload.example.com/a", "https://upload.example.com/b"]
     assert progress_events[-1]["done"] == 2
+
+
+def test_mineru_parser_retries_download_and_falls_back_to_verify_false(monkeypatch):
+    parser = MinerUParser(
+        {
+            "mode": "api",
+            "token": "mineru-token",
+            "timeout": 30,
+            "download_retries": 2,
+            "allow_insecure_result_download": True,
+        }
+    )
+
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("result/full.md", "# Abstract\n\nRecovered markdown output")
+    archive_bytes = archive_buffer.getvalue()
+
+    calls = []
+
+    def fake_get(url, timeout=None, verify=True):
+        calls.append({"url": url, "verify": verify, "timeout": timeout})
+        if verify:
+            raise requests.exceptions.SSLError("EOF occurred in violation of protocol")
+        return MockResponse(status_code=200, content=archive_bytes)
+
+    monkeypatch.setattr("paperinsight.parser.mineru.requests.get", fake_get)
+    monkeypatch.setattr("paperinsight.parser.mineru.time.sleep", lambda *_args, **_kwargs: None)
+
+    result = ParseResult(source_file="demo.pdf", parser_name="MinerU")
+    parser._populate_result_from_extract_result(
+        result,
+        batch_id="batch-ssl",
+        extract_result={
+            "state": "done",
+            "data_id": "demo",
+            "full_zip_url": "https://download.example.com/result.zip",
+        },
+    )
+
+    assert result.markdown == "# Abstract\n\nRecovered markdown output"
+    assert calls[-1]["verify"] is False
+    assert len(calls) == 3
