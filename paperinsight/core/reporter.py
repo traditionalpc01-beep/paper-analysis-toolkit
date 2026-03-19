@@ -349,7 +349,7 @@ class ReportGenerator:
 
     def _build_default_filename(self, extension: str) -> str:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_name = f"paperinsight_report_{timestamp}"
+        base_name = f"论文分析报告_{timestamp}"
         return f"{base_name}.{extension}"
 
     def _build_unique_output_path(self, output_filename: str) -> Path:
