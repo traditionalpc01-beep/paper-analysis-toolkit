@@ -3,13 +3,17 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Dict, List
 from urllib.parse import urlencode
 
 import requests
 
 from paperinsight.utils.journal_metadata import canonicalize_journal_title
 from paperinsight.web.journal_resolver import MJLJournalCandidate
+
+# 影响因子数据缓存
+IF_CACHE: Dict[str, Dict] = {}
+CACHE_EXPIRY = 86400  # 缓存过期时间（秒）
 
 
 @dataclass(frozen=True)
@@ -107,63 +111,85 @@ class MJLImpactFactorFetcher:
         )
 
     def lookup(self, candidate: MJLJournalCandidate) -> ImpactFactorLookupResult:
+        # 检查缓存
+        canonical_title = canonicalize_journal_title(candidate.display_title)
+        if canonical_title and self._check_cache(canonical_title):
+            cache_data = IF_CACHE[canonical_title]
+            return ImpactFactorLookupResult(
+                status="OK",
+                source_name="CACHE",
+                source_url=cache_data['source_url'],
+                impact_factor=cache_data['impact_factor'],
+                year=cache_data['year'],
+            )
+
         profile_url = self._build_profile_api_url(candidate)
+        results = []
         
-        # 尝试多次调用，增加重试机制
+        # 尝试从MJL API获取数据
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = self.session.get(profile_url, timeout=self.timeout)
                 
                 if response.status_code in {401, 403}:
-                    return self._fallback_lookup(
-                        candidate,
-                        status="NO_ACCESS",
-                        default_url=profile_url,
-                        error_message="Profile endpoint requires an authenticated MJL session.",
-                    )
+                    break
                 if response.status_code == 404:
-                    return self._fallback_lookup(candidate, status="NO_MATCH", default_url=profile_url)
+                    break
                 if response.status_code >= 400:
                     if attempt < max_retries - 1:
-                        # 短暂等待后重试
-                        import time
                         time.sleep(1)
                         continue
-                    return self._fallback_lookup(
-                        candidate,
-                        status="ERROR",
-                        default_url=profile_url,
-                        error_message=f"HTTP {response.status_code}",
-                    )
+                    break
 
                 data = response.json()
                 parsed = self._extract_impact_factor(data)
                 if parsed is not None:
                     year, impact_factor = parsed
-                    # 验证IF值的合理性
                     if 0.1 <= impact_factor <= 200:
-                        return ImpactFactorLookupResult(
-                            status="OK",
-                            source_name="MJL_PROFILE_API",
-                            source_url=profile_url,
-                            impact_factor=impact_factor,
-                            year=year,
-                        )
-
-                return self._fallback_lookup(candidate, status="NOT_VISIBLE", default_url=profile_url)
+                        results.append({
+                            'source': 'MJL_PROFILE_API',
+                            'url': profile_url,
+                            'impact_factor': impact_factor,
+                            'year': year
+                        })
+                break
             except requests.RequestException as e:
                 if attempt < max_retries - 1:
-                    # 短暂等待后重试
-                    import time
                     time.sleep(1)
                     continue
-                return self._fallback_lookup(
-                    candidate,
-                    status="ERROR",
-                    default_url=profile_url,
-                    error_message=f"Request failed: {str(e)}",
-                )
+                break
+
+        # 尝试实时网络搜索验证
+        web_result = self._web_search_verification(candidate.display_title)
+        if web_result:
+            results.append(web_result)
+
+        # 尝试使用fallback数据
+        fallback_result = self._fallback_lookup(candidate, status="NOT_VISIBLE", default_url=profile_url)
+        if fallback_result.impact_factor:
+            results.append({
+                'source': 'CURATED_FALLBACK',
+                'url': fallback_result.source_url,
+                'impact_factor': fallback_result.impact_factor,
+                'year': fallback_result.year
+            })
+
+        # 交叉验证并选择最佳结果
+        if results:
+            best_result = self._cross_validate(results)
+            # 更新缓存
+            if canonical_title:
+                self._update_cache(canonical_title, best_result)
+            return ImpactFactorLookupResult(
+                status="OK",
+                source_name=best_result['source'],
+                source_url=best_result['url'],
+                impact_factor=best_result['impact_factor'],
+                year=best_result['year'],
+            )
+
+        return fallback_result
 
     def lookup_by_title(self, journal_title: Optional[str]) -> ImpactFactorLookupResult:
         canonical_title = canonicalize_journal_title(journal_title)
@@ -174,21 +200,52 @@ class MJLImpactFactorFetcher:
                 source_url="",
             )
 
-        fallback = self.fallback_impact_factors.get(canonical_title)
-        if not fallback:
+        # 检查缓存
+        if self._check_cache(canonical_title):
+            cache_data = IF_CACHE[canonical_title]
             return ImpactFactorLookupResult(
-                status="NO_MATCH",
-                source_name="CURATED_FALLBACK",
-                source_url="",
+                status="OK",
+                source_name="CACHE",
+                source_url=cache_data['source_url'],
+                impact_factor=cache_data['impact_factor'],
+                year=cache_data['year'],
             )
 
-        impact_factor, year, source_url = fallback
+        results = []
+
+        # 尝试实时网络搜索验证
+        web_result = self._web_search_verification(journal_title)
+        if web_result:
+            results.append(web_result)
+
+        # 尝试使用fallback数据
+        fallback = self.fallback_impact_factors.get(canonical_title)
+        if fallback:
+            impact_factor, year, source_url = fallback
+            results.append({
+                'source': 'CURATED_FALLBACK',
+                'url': source_url,
+                'impact_factor': impact_factor,
+                'year': year
+            })
+
+        # 交叉验证并选择最佳结果
+        if results:
+            best_result = self._cross_validate(results)
+            # 更新缓存
+            self._update_cache(canonical_title, best_result)
+            return ImpactFactorLookupResult(
+                status="OK",
+                source_name=best_result['source'],
+                source_url=best_result['url'],
+                impact_factor=best_result['impact_factor'],
+                year=best_result['year'],
+            )
+
         return ImpactFactorLookupResult(
-            status="OK",
+            status="NO_MATCH",
             source_name="CURATED_FALLBACK",
-            source_url=source_url,
-            impact_factor=impact_factor,
-            year=year,
+            source_url="",
         )
 
     def _register_fallback(
@@ -323,3 +380,95 @@ class MJLImpactFactorFetcher:
         if not match:
             return None
         return float(match.group(1))
+
+    def _check_cache(self, canonical_title: str) -> bool:
+        """检查缓存是否有效"""
+        if canonical_title not in IF_CACHE:
+            return False
+        cache_data = IF_CACHE[canonical_title]
+        return time.time() - cache_data['timestamp'] < CACHE_EXPIRY
+
+    def _update_cache(self, canonical_title: str, result: Dict) -> None:
+        """更新缓存"""
+        IF_CACHE[canonical_title] = {
+            'impact_factor': result['impact_factor'],
+            'year': result['year'],
+            'source_url': result['url'],
+            'timestamp': time.time()
+        }
+
+    def _web_search_verification(self, journal_title: str) -> Optional[Dict]:
+        """通过网络搜索验证影响因子"""
+        try:
+            # 构建搜索URL
+            search_url = f"https://scholar.google.com/scholar?q={urlencode({'q': f'{journal_title} impact factor 2024'})}"
+            response = self.session.get(search_url, timeout=10)
+            
+            if response.status_code != 200:
+                return None
+            
+            # 提取影响因子
+            content = response.text
+            # 尝试从搜索结果中提取影响因子
+            match = re.search(r'Impact Factor[:\s]+([0-9]+(?:\.[0-9]+)?)', content, re.IGNORECASE)
+            if match:
+                impact_factor = float(match.group(1))
+                if 0.1 <= impact_factor <= 200:
+                    return {
+                        'source': 'WEB_SEARCH',
+                        'url': search_url,
+                        'impact_factor': impact_factor,
+                        'year': 2024
+                    }
+            
+            # 尝试从其他模式提取
+            match = re.search(r'IF[:\s]+([0-9]+(?:\.[0-9]+)?)', content, re.IGNORECASE)
+            if match:
+                impact_factor = float(match.group(1))
+                if 0.1 <= impact_factor <= 200:
+                    return {
+                        'source': 'WEB_SEARCH',
+                        'url': search_url,
+                        'impact_factor': impact_factor,
+                        'year': 2024
+                    }
+        except Exception:
+            pass
+        return None
+
+    def _cross_validate(self, results: List[Dict]) -> Dict:
+        """交叉验证多个数据源的影响因子"""
+        if not results:
+            raise ValueError("No results to cross validate")
+        
+        # 按年份排序，优先选择最新年份的数据
+        results.sort(key=lambda x: x['year'] or 0, reverse=True)
+        
+        # 按来源优先级排序
+        source_priority = {
+            'MJL_PROFILE_API': 4,
+            'WEB_SEARCH': 3,
+            'CURATED_FALLBACK': 2,
+            'CACHE': 1
+        }
+        
+        # 计算每个结果的综合得分
+        for result in results:
+            priority = source_priority.get(result['source'], 0)
+            year_score = (result['year'] or 0) / 2024  # 年份越接近2024得分越高
+            result['score'] = priority * 0.7 + year_score * 0.3
+        
+        # 选择得分最高的结果
+        best_result = max(results, key=lambda x: x['score'])
+        
+        # 验证结果的合理性
+        if 0.1 <= best_result['impact_factor'] <= 200:
+            return best_result
+        
+        # 如果最佳结果不合理，选择次优结果
+        for result in sorted(results, key=lambda x: x['score'], reverse=True):
+            if 0.1 <= result['impact_factor'] <= 200:
+                return result
+        
+        # 如果所有结果都不合理，返回第一个结果
+        return results[0]

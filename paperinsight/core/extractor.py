@@ -1177,17 +1177,51 @@ class DataExtractor:
         """提取发表年份"""
         # 查找年份模式
         patterns = [
-            r'(?:published|accepted|received)[^0-9]{0,20}(20[1-2][0-9])',
-            r'©?\s*(20[1-2][0-9])\s+(?:The\s+Author|Elsevier|Nature|Science|Wiley)',
+            # 从出版信息中提取
+            r'(?:published|accepted|received|online|available)[^0-9]{0,20}(20[1-2][0-9])',
+            # 从版权信息中提取
+            r'©?\s*(20[1-2][0-9])\s+(?:The\s+Author|Elsevier|Nature|Science|Wiley|Springer|ACS|Taylor\s+&\s+Francis)',
+            # 从标题中提取（例如：2024, 2023等）
+            r'\b(20[1-2][0-9])\b',
+            # 从卷号/期号中提取（例如：Vol. 123, 2024）
+            r'\b(?:vol|volume|issue|no)\.?\s*\d+[^0-9]{0,10}(20[1-2][0-9])',
+            # 从DOI中提取
+            r'\b10\.\S+/(?:20[1-2][0-9])\b',
+            # 从引用格式中提取
+            r'\b(20[1-2][0-9])\b[^0-9]{0,20}(?:doi|pmid|arxiv)',
         ]
 
-        for pattern in patterns:
-            match = re.search(pattern, text[:3000], re.IGNORECASE)
-            if match:
-                try:
-                    return int(match.group(1))
-                except ValueError:
-                    continue
+        # 存储所有找到的年份候选
+        year_candidates = []
+
+        # 搜索文本的不同部分
+        search_sections = [
+            text[:3000],  # 开头部分
+            text[-3000:],  # 结尾部分
+        ]
+
+        for section in search_sections:
+            for pattern in patterns:
+                matches = re.findall(pattern, section, re.IGNORECASE)
+                for match in matches:
+                    try:
+                        year = int(match)
+                        # 验证年份的合理性（2010-2026）
+                        if 2010 <= year <= 2026:
+                            year_candidates.append(year)
+                    except ValueError:
+                        continue
+
+        # 如果有多个候选年份，选择最常见的那个
+        if year_candidates:
+            # 统计每个年份的出现次数
+            year_counts = {}
+            for year in year_candidates:
+                year_counts[year] = year_counts.get(year, 0) + 1
+            # 按出现次数排序
+            sorted_years = sorted(year_counts.items(), key=lambda x: x[1], reverse=True)
+            # 返回出现次数最多的年份
+            return sorted_years[0][0]
 
         return None
 
