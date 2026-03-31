@@ -943,17 +943,34 @@ class AnalysisPipeline:
                         )
                         progress_bar.update(1)
             else:
-                for pdf_path, _ in pending_files:
+                # 优化：使用线程池并行处理PDF文件
+                import concurrent.futures
+                from concurrent.futures import ThreadPoolExecutor
+                
+                def process_single_pdf(pdf_item):
+                    pdf_path, md5 = pdf_item
                     paper_data, error_info = self.process_pdf(pdf_path, max_pages, use_cache)
-                    self._collect_batch_item_result(
-                        pdf_path,
-                        paper_data,
-                        error_info,
-                        results,
-                        errors,
-                        processed_items,
-                    )
-                    progress_bar.update(1)
+                    return pdf_path, paper_data, error_info
+                
+                # 根据系统资源设置线程池大小
+                max_workers = min(4, len(pending_files))  # 最多4个线程
+                
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # 提交所有任务
+                    future_to_pdf = {executor.submit(process_single_pdf, item): item for item in pending_files}
+                    
+                    # 处理完成的任务
+                    for future in concurrent.futures.as_completed(future_to_pdf):
+                        pdf_path, paper_data, error_info = future.result()
+                        self._collect_batch_item_result(
+                            pdf_path,
+                            paper_data,
+                            error_info,
+                            results,
+                            errors,
+                            processed_items,
+                        )
+                        progress_bar.update(1)
 
         return results, errors, processed_items
 

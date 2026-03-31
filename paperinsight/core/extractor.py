@@ -630,33 +630,40 @@ class DataExtractor:
 
     def _extract_title(self, text: str, parse_result: Optional[ParseResult]) -> Optional[str]:
         """提取论文标题"""
-        metadata_candidates: List[str] = []
+        # 1. 优先从PDF元数据提取（增强优先级）
         if parse_result:
+            # 直接从PDF元数据提取
+            source_metadata = self._extract_pdf_metadata_from_source(parse_result)
+            pdf_title = self._coerce_metadata_value(source_metadata.get("title"))
+            if pdf_title:
+                normalized = self._normalize_title_candidate(pdf_title)
+                if normalized and not self._is_bad_title_candidate(normalized):
+                    return normalized
+            
+            # 从parse_result.metadata提取
+            metadata_candidates = []
             metadata_candidates.extend(
                 filter(
                     None,
                     [
                         self._coerce_metadata_value(parse_result.metadata.get("title")),
                         self._coerce_metadata_value(parse_result.metadata.get("dc:title")),
-                    ],
-                )
-            )
-            source_metadata = self._extract_pdf_metadata_from_source(parse_result)
-            metadata_candidates.extend(
-                filter(
-                    None,
-                    [
-                        self._coerce_metadata_value(source_metadata.get("title")),
                         self._coerce_metadata_value(source_metadata.get("subject")),
                     ],
                 )
             )
 
-        for candidate in metadata_candidates:
-            normalized = self._normalize_title_candidate(candidate)
-            if normalized and not self._is_bad_title_candidate(normalized):
-                return normalized
+            for candidate in metadata_candidates:
+                normalized = self._normalize_title_candidate(candidate)
+                if normalized and not self._is_bad_title_candidate(normalized):
+                    return normalized
 
+        # 2. ScienceDirect格式特殊处理
+        sciencedirect_title = self._extract_sciencedirect_title(text)
+        if sciencedirect_title:
+            return sciencedirect_title
+
+        # 3. 从文本行提取
         line_candidates = self._extract_title_candidates_from_lines(parse_result, text)
         if line_candidates:
             return line_candidates[0]
@@ -739,7 +746,7 @@ class DataExtractor:
         lowered = candidate.lower().strip()
         if not lowered:
             return True
-        if len(candidate) < 20 or len(candidate) > 260:
+        if len(candidate) < 15 or len(candidate) > 300:
             return True
         if any(re.match(pattern, lowered, re.IGNORECASE) for pattern in self.TITLE_STOP_PATTERNS):
             return True
@@ -796,14 +803,135 @@ class DataExtractor:
 
         return score
 
+    def _extract_sciencedirect_title(self, text: str) -> Optional[str]:
+        """提取ScienceDirect格式论文的标题"""
+        # ScienceDirect论文通常有特定格式，标题可能在特定位置
+        # 1. 查找包含 ScienceDirect 特征的模式
+        sciencedirect_patterns = [
+            r'\bScienceDirect\b',
+            r'\bElsevier\b',
+            r'1-s2\.0-',  # ScienceDirect文件格式
+        ]
+        
+        # 检查是否是ScienceDirect论文
+        is_sciencedirect = any(pattern in text[:10000] for pattern in sciencedirect_patterns)
+        if not is_sciencedirect:
+            return None
+        
+        # 2. 尝试从文本中提取标题
+        # 常见的ScienceDirect标题格式：标题通常在文档开头，可能有特殊标记
+        lines = text.split('\n')
+        
+        # 寻找可能的标题行
+        for i, line in enumerate(lines[:50]):  # 检查前50行
+            line = line.strip()
+            if not line:
+                continue
+            
+            # 标题通常长度适中，首字母大写，不含数字和特殊符号
+            if (20 <= len(line) <= 200 and 
+                line[0].isupper() and 
+                not line.startswith('Abstract') and
+                not line.startswith('Keywords') and
+                not line.startswith('Received') and
+                not line.startswith('Accepted') and
+                not line.startswith('Published') and
+                not '@' in line and
+                not 'www.' in line and
+                not 'http' in line):
+                
+                # 检查下一行是否是作者行（通常包含逗号和多个名字）
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if next_line and (',' in next_line or 'and' in next_line):
+                        normalized = self._normalize_title_candidate(line)
+                        if normalized and not self._is_bad_title_candidate(normalized):
+                            return normalized
+        
+        return None
+
+    def _extract_sciencedirect_authors(self, text: str) -> Optional[str]:
+        """提取ScienceDirect格式论文的作者"""
+        # 1. 检查是否是ScienceDirect论文
+        sciencedirect_patterns = [
+            r'\bScienceDirect\b',
+            r'\bElsevier\b',
+            r'1-s2\.0-',
+        ]
+        
+        is_sciencedirect = any(pattern in text[:10000] for pattern in sciencedirect_patterns)
+        if not is_sciencedirect:
+            return None
+        
+        # 2. 寻找作者行
+        lines = text.split('\n')
+        
+        for i, line in enumerate(lines[:60]):  # 检查前60行
+            line = line.strip()
+            if not line:
+                continue
+            
+            # 作者行通常包含多个名字，用逗号或and分隔
+            # 检查是否包含多个大写字母开头的单词（可能是名字）
+            words = line.split()
+            capital_words = [word for word in words if word[0].isupper() and len(word) > 1]
+            
+            # 作者行特征：包含多个名字，可能有逗号，可能有and
+            if (len(capital_words) >= 2 and 
+                (',' in line or 'and' in line.lower()) and
+                not line.startswith('Abstract') and
+                not line.startswith('Keywords') and
+                not line.startswith('Received') and
+                not line.startswith('Accepted') and
+                not line.startswith('Published') and
+                not '@' in line and
+                not 'www.' in line):
+                
+                # 提取作者名字
+                # 简单处理：提取所有大写开头的单词组合
+                authors = []
+                current_author = []
+                
+                for word in words:
+                    if word[0].isupper() and len(word) > 1:
+                        current_author.append(word)
+                    elif current_author:
+                        authors.append(' '.join(current_author))
+                        current_author = []
+                
+                if current_author:
+                    authors.append(' '.join(current_author))
+                
+                # 过滤掉可能不是名字的词
+                filtered_authors = [author for author in authors if len(author.split()) >= 2]
+                
+                if filtered_authors:
+                    return ", ".join(filtered_authors[:10])
+        
+        return None
+
     def _extract_authors(self, text: str, parse_result: Optional[ParseResult]) -> Optional[str]:
         """提取作者"""
+        # 1. 优先从PDF元数据提取
+        if parse_result:
+            source_metadata = self._extract_pdf_metadata_from_source(parse_result)
+            pdf_authors = self._coerce_metadata_value(source_metadata.get("author"))
+            if pdf_authors:
+                parts = [p.strip() for p in re.split(r"[;,\n]+", pdf_authors) if p.strip()]
+                return ", ".join(parts[:10])
+        
+        # 2. 从parse_result.metadata提取
         if parse_result and parse_result.metadata.get("author"):
             authors = parse_result.metadata["author"]
             parts = [p.strip() for p in re.split(r"[;,\n]+", authors) if p.strip()]
             return ", ".join(parts[:10])  # 限制作者数量
 
-        # 正则匹配
+        # 3. ScienceDirect格式特殊处理
+        sciencedirect_authors = self._extract_sciencedirect_authors(text)
+        if sciencedirect_authors:
+            return sciencedirect_authors
+
+        # 4. 正则匹配
         name_pattern = r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b'
         matches = re.findall(name_pattern, text[:5000])
 
@@ -1132,9 +1260,13 @@ class DataExtractor:
             eqe = self._extract_first_eqe(segment)
             cie = self._extract_first_cie(segment)
             lifetime = self._extract_first_lifetime(segment)
+            luminance = self._extract_first_luminance(segment)
+            current_efficiency = self._extract_first_current_efficiency(segment)
+            power_efficiency = self._extract_first_power_efficiency(segment)
             label = self._extract_device_label(segment)
 
-            has_signal = bool(structure or eqe or cie or lifetime)
+            # 降低信号阈值：只要有任何一个关键参数就认为是器件信息
+            has_signal = bool(structure or eqe or cie or lifetime or luminance or current_efficiency or power_efficiency)
             if not has_signal:
                 continue
 
@@ -1150,7 +1282,10 @@ class DataExtractor:
                     eqe=eqe,
                     cie=cie,
                     lifetime=lifetime,
-                    notes=self._build_device_notes(segment),
+                    luminance=luminance,
+                    current_efficiency=current_efficiency,
+                    power_efficiency=power_efficiency,
+                    notes=self._clean_device_notes(segment),
                 )
             )
 
@@ -1236,6 +1371,97 @@ class DataExtractor:
         if len(compact) <= 220:
             return compact
         return compact[:217].rstrip() + "..."
+
+    def _clean_device_notes(self, text: str) -> Optional[str]:
+        """清洗器件notes字段中的噪声"""
+        if not text:
+            return None
+        
+        # 1. 去除期刊信息
+        journal_patterns = [
+            r'Research Article',
+            r'RESEARCH ARTICLE',
+            r'www\.afm-journal\.de',
+            r'www\.small-journal\.com',
+            r'www\.advancedsciencenews\.com',
+        ]
+        
+        cleaned = text
+        for pattern in journal_patterns:
+            cleaned = re.sub(pattern, '', cleaned)
+        
+        # 2. 去除图说明
+        cleaned = re.sub(r'Figure \d+\..*?(?=\s|$)', '', cleaned)
+        cleaned = re.sub(r'Fig\. \d+\..*?(?=\s|$)', '', cleaned)
+        
+        # 3. 去除参考文献引用
+        cleaned = re.sub(r'\[\d+(?:-\d+)?\]', '', cleaned)
+        
+        # 4. 去除多余空白
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        
+        # 5. 限制长度
+        if len(cleaned) > 220:
+            cleaned = cleaned[:217].rstrip() + "..."
+        
+        return cleaned if cleaned else None
+
+    def _extract_first_luminance(self, text: str) -> Optional[str]:
+        """提取第一个亮度值"""
+        values = self._extract_all_luminance(text)
+        return values[0] if values else None
+
+    def _extract_all_luminance(self, text: str) -> List[str]:
+        """提取所有亮度值"""
+        patterns = [
+            r'(?:luminance|brightness)\s*[:=]?\s*([0-9]+(?:\.[0-9]+)?(?:\s*×\s*10\^\d+)?\s*(?:cd/m²|cd/m2|cd\s*/\s*m\s*²|nits))',
+            r'([0-9]+(?:\.[0-9]+)?(?:\s*×\s*10\^\d+)?\s*(?:cd/m²|cd/m2|cd\s*/\s*m\s*²|nits))\s*(?:luminance|brightness)?',
+        ]
+        
+        results = []
+        for pattern in patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            results.extend(matches)
+        
+        return list(dict.fromkeys(results))
+
+    def _extract_first_current_efficiency(self, text: str) -> Optional[str]:
+        """提取第一个电流效率值"""
+        values = self._extract_all_current_efficiency(text)
+        return values[0] if values else None
+
+    def _extract_all_current_efficiency(self, text: str) -> List[str]:
+        """提取所有电流效率值"""
+        patterns = [
+            r'(?:current\s*efficiency|CE)\s*[:=]?\s*([0-9]+(?:\.[0-9]+)?\s*cd/A)',
+            r'([0-9]+(?:\.[0-9]+)?\s*cd/A)\s*(?:current\s*efficiency|CE)?',
+        ]
+        
+        results = []
+        for pattern in patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            results.extend(matches)
+        
+        return list(dict.fromkeys(results))
+
+    def _extract_first_power_efficiency(self, text: str) -> Optional[str]:
+        """提取第一个功率效率值"""
+        values = self._extract_all_power_efficiency(text)
+        return values[0] if values else None
+
+    def _extract_all_power_efficiency(self, text: str) -> List[str]:
+        """提取所有功率效率值"""
+        patterns = [
+            r'(?:power\s*efficiency|PE)\s*[:=]?\s*([0-9]+(?:\.[0-9]+)?\s*lm/W)',
+            r'([0-9]+(?:\.[0-9]+)?\s*lm/W)\s*(?:power\s*efficiency|PE)?',
+        ]
+        
+        results = []
+        for pattern in patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            results.extend(matches)
+        
+        return list(dict.fromkeys(results))
 
     def _merge_inferred_devices(self, paper_data: PaperData, text: str) -> PaperData:
         """用本地启发式补强器件列表，优先修补空器件或单器件缺字段场景。"""
@@ -1410,8 +1636,11 @@ class DataExtractor:
     def _extract_all_cie(self, text: str) -> List[str]:
         """提取所有 CIE 坐标"""
         patterns = [
-            r'CIE[^0-9]*?\(([0-9]\.[0-9]+)\s*[,，]\s*([0-9]\.[0-9]+)\)',
-            r'\(([0-9]\.[0-9]+)\s*[,，]\s*([0-9]\.[0-9]+)\)[^)]*CIE',
+            r'CIE[^0-9]*?\(([0-9]?\.[0-9]+)\s*[,，]\s*([0-9]?\.[0-9]+)\)',
+            r'\(([0-9]?\.[0-9]+)\s*[,，]\s*([0-9]?\.[0-9]+)\)[^)]*CIE',
+            r'色度坐标[^0-9]*?\(([0-9]?\.[0-9]+)\s*[,，]\s*([0-9]?\.[0-9]+)\)',
+            r'color\s*coordinates?[^0-9]*?\(([0-9]?\.[0-9]+)\s*[,，]\s*([0-9]?\.[0-9]+)\)',
+            r'\b(?:x|y)\s*=\s*([0-9]?\.[0-9]+)\s*,?\s*(?:x|y)\s*=\s*([0-9]?\.[0-9]+)',
         ]
 
         values = []

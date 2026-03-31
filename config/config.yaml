@@ -1,12 +1,16 @@
 # PaperInsight 配置文件
 
-# 百度 OCR API 配置
-baidu_ocr:
-  enabled: false
-  api_key: ""
-  secret_key: ""
-  language: "CHN_ENG"  # 语言类型: CHN_ENG, ENG, CHN
-  timeout: 60
+# MinerU PDF 解析配置
+mineru:
+  enabled: true
+  mode: "cli"  # cli 或 api
+  token: ""
+  api_url: "https://mineru.net/api/v4"
+  timeout: 600
+  model_version: "vlm"
+  output_format: "markdown"
+  extract_tables: true
+  method: "auto"
 
 # PaddleX API 配置
 paddlex:
@@ -22,17 +26,31 @@ paddlex:
 
 # LLM 配置
 llm:
-  enabled: false
-  provider: "openai"  # openai, deepseek
-  api_key: ""
-  model: "gpt-4o"
-  base_url: ""  # 可选,用于代理
+  enabled: true
+  provider: "longcat"
+  api_key: "sk-8f7b9c2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b"  # 请替换为真实的API Key
+  model: "LongCat-Flash-Chat"
+  base_url: ""
   timeout: 120
+  longcat:
+    model: "LongCat-Flash-Chat"
+    enable_lite_backfill: true
+    backfill_model: "LongCat-Flash-Lite"
 
 # Web 搜索配置
 web_search:
   enabled: true
   timeout: 30
+  correct_existing_impact_factor: true
+  fetch_official_impact_factor: true
+  
+  # AI模型影响因子获取配置（新方式）
+  use_ai_model_if: true  # 设为true启用新方式：X-MOL优先，AI API兜底
+  ai_model_if:
+    enabled: true
+    timeout: 30
+    qianwen_api_key: ""
+    kimi_api_key: ""
 
 # 缓存配置
 cache:
@@ -41,13 +59,37 @@ cache:
 
 # 输出配置
 output:
-  format: ["excel"]  # excel, json
+  format: ["excel", "json"]
   sort_by_if: true
   generate_error_log: true
   rename_pdfs: false
   rename_template: "[{year}_{impact_factor}_{journal}]_{title}.pdf"
+  bilingual_text: false
+
+# 文本清洗配置
+cleaner:
+  enabled: true
+  block_window: 1
+  max_input_chars: 24000
+  max_blocks: 80
+  min_block_score: 3.0
+  keep_table_context: true
+  remove_sections:
+    - "references"
+    - "acknowledgments"
+    - "author contributions"
+    - "supplementary material"
+    - "conflict of interest"
+    - "data availability"
+  keep_sections:
+    - "abstract"
+    - "introduction"
+    - "experimental"
+    - "results"
+    - "discussion"
+    - "conclusion"
 
 # PDF 处理配置
 pdf:
-  max_pages: 0  # 0 表示不限制
-  text_ratio_threshold: 0.1  # 文本比例阈值,低于此值视为扫描版
+  max_pages: 0
+  text_ratio_threshold: 0.1

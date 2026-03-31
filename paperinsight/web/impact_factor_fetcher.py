@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import urlencode
@@ -107,38 +108,62 @@ class MJLImpactFactorFetcher:
 
     def lookup(self, candidate: MJLJournalCandidate) -> ImpactFactorLookupResult:
         profile_url = self._build_profile_api_url(candidate)
-        response = self.session.get(profile_url, timeout=self.timeout)
+        
+        # 尝试多次调用，增加重试机制
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.session.get(profile_url, timeout=self.timeout)
+                
+                if response.status_code in {401, 403}:
+                    return self._fallback_lookup(
+                        candidate,
+                        status="NO_ACCESS",
+                        default_url=profile_url,
+                        error_message="Profile endpoint requires an authenticated MJL session.",
+                    )
+                if response.status_code == 404:
+                    return self._fallback_lookup(candidate, status="NO_MATCH", default_url=profile_url)
+                if response.status_code >= 400:
+                    if attempt < max_retries - 1:
+                        # 短暂等待后重试
+                        import time
+                        time.sleep(1)
+                        continue
+                    return self._fallback_lookup(
+                        candidate,
+                        status="ERROR",
+                        default_url=profile_url,
+                        error_message=f"HTTP {response.status_code}",
+                    )
 
-        if response.status_code in {401, 403}:
-            return self._fallback_lookup(
-                candidate,
-                status="NO_ACCESS",
-                default_url=profile_url,
-                error_message="Profile endpoint requires an authenticated MJL session.",
-            )
-        if response.status_code == 404:
-            return self._fallback_lookup(candidate, status="NO_MATCH", default_url=profile_url)
-        if response.status_code >= 400:
-            return self._fallback_lookup(
-                candidate,
-                status="ERROR",
-                default_url=profile_url,
-                error_message=f"HTTP {response.status_code}",
-            )
+                data = response.json()
+                parsed = self._extract_impact_factor(data)
+                if parsed is not None:
+                    year, impact_factor = parsed
+                    # 验证IF值的合理性
+                    if 0.1 <= impact_factor <= 200:
+                        return ImpactFactorLookupResult(
+                            status="OK",
+                            source_name="MJL_PROFILE_API",
+                            source_url=profile_url,
+                            impact_factor=impact_factor,
+                            year=year,
+                        )
 
-        data = response.json()
-        parsed = self._extract_impact_factor(data)
-        if parsed is not None:
-            year, impact_factor = parsed
-            return ImpactFactorLookupResult(
-                status="OK",
-                source_name="MJL_PROFILE_API",
-                source_url=profile_url,
-                impact_factor=impact_factor,
-                year=year,
-            )
-
-        return self._fallback_lookup(candidate, status="NOT_VISIBLE", default_url=profile_url)
+                return self._fallback_lookup(candidate, status="NOT_VISIBLE", default_url=profile_url)
+            except requests.RequestException as e:
+                if attempt < max_retries - 1:
+                    # 短暂等待后重试
+                    import time
+                    time.sleep(1)
+                    continue
+                return self._fallback_lookup(
+                    candidate,
+                    status="ERROR",
+                    default_url=profile_url,
+                    error_message=f"Request failed: {str(e)}",
+                )
 
     def lookup_by_title(self, journal_title: Optional[str]) -> ImpactFactorLookupResult:
         canonical_title = canonicalize_journal_title(journal_title)

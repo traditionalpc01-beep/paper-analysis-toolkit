@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import re
+import time
 from typing import Optional
 from urllib.parse import urlencode, urljoin
 
@@ -65,34 +66,43 @@ class LetPubImpactFactorFetcher:
 
         search_url = urljoin(self.BASE_URL, f"{self.SEARCH_PATH}?{urlencode(params)}")
 
-        try:
-            response = self.session.get(search_url, timeout=self.timeout)
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            return ImpactFactorLookupResult(
-                status="ERROR",
-                source_name="LETPUB",
-                source_url=search_url,
-                error_message=str(exc),
-            )
+        # 尝试多次调用，增加重试机制
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.session.get(search_url, timeout=self.timeout)
+                response.raise_for_status()
+                
+                response.encoding = response.encoding or response.apparent_encoding or "utf-8"
+                result = self._parse_search_results(
+                    response.text,
+                    search_url=search_url,
+                    journal_title=journal_title,
+                    issn=normalized_issn,
+                    eissn=normalized_eissn,
+                )
+                if result is not None:
+                    # 验证IF值的合理性
+                    if result.impact_factor and 0.1 <= result.impact_factor <= 200:
+                        return result
 
-        response.encoding = response.encoding or response.apparent_encoding or "utf-8"
-        result = self._parse_search_results(
-            response.text,
-            search_url=search_url,
-            journal_title=journal_title,
-            issn=normalized_issn,
-            eissn=normalized_eissn,
-        )
-        if result is not None:
-            return result
-
-        return ImpactFactorLookupResult(
-            status="NOT_FOUND",
-            source_name="LETPUB",
-            source_url=search_url,
-            error_message="No matching journal row was found on LetPub",
-        )
+                return ImpactFactorLookupResult(
+                    status="NOT_FOUND",
+                    source_name="LETPUB",
+                    source_url=search_url,
+                    error_message="No matching journal row was found on LetPub",
+                )
+            except requests.RequestException as exc:
+                if attempt < max_retries - 1:
+                    # 短暂等待后重试
+                    time.sleep(1)
+                    continue
+                return ImpactFactorLookupResult(
+                    status="ERROR",
+                    source_name="LETPUB",
+                    source_url=search_url,
+                    error_message=str(exc),
+                )
 
     def _parse_search_results(
         self,
