@@ -6,6 +6,7 @@
 2. 嵌套式 JSON Schema 输出
 3. Pydantic 数据校验
 4. 正则表达式兜底方案
+5. 支持多种研究领域的提取模板
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import ValidationError
 
@@ -25,6 +26,15 @@ from paperinsight.models.schemas import (
     DataSourceReference,
     OptimizationInfo,
     PAPER_DATA_JSON_SCHEMA,
+    SolarCellDeviceData,
+    BatteryDeviceData,
+    SensorDeviceData,
+)
+from paperinsight.models.templates import (
+    ExtractionTemplate,
+    get_template,
+    get_default_template,
+    TemplateType,
 )
 from paperinsight.parser.base import ParseResult
 from paperinsight.llm.base import BaseLLM
@@ -32,6 +42,7 @@ from paperinsight.llm import create_llm_client
 from paperinsight.llm.prompt_templates import (
     format_bilingual_postprocess_prompt,
     format_extraction_prompt_v3,
+    format_extraction_prompt_with_template,
     format_lite_paper_info_backfill_prompt,
 )
 from paperinsight.utils.logger import setup_logger
@@ -127,12 +138,15 @@ class DataExtractor:
         self,
         config: Optional[Dict[str, Any]] = None,
         use_llm: Optional[bool] = None,
+        template_id: Optional[str] = None,
     ):
         """
         初始化数据提取器
 
         Args:
             config: 配置字典，包含 LLM 配置等
+            use_llm: 是否使用 LLM（向后兼容参数）
+            template_id: 提取模板ID，支持 'oled', 'solar_cell', 'battery', 'sensor'
         """
         if use_llm is not None:
             config = dict(config or {})
@@ -146,7 +160,10 @@ class DataExtractor:
         self.llm_config = self.config.get("llm", {})
         self.logger = setup_logger("paperinsight.extractor")
 
-        # 初始化 LLM 客户端
+        self.template_id = template_id or self.config.get("template_id", "oled")
+        self.template = get_template(self.template_id) or get_default_template()
+        self.logger.info(f"[Template] using template: {self.template.template_name} ({self.template_id})")
+
         self.llm: Optional[BaseLLM] = None
         self.lite_backfill_llm: Optional[BaseLLM] = None
         self._init_llm_client()
@@ -256,22 +273,22 @@ class DataExtractor:
         try:
             prepared_text = self._prepare_llm_input(text)
 
-            # 构建 Prompt
-            prompt = format_extraction_prompt_v3(prepared_text)
+            prompt = format_extraction_prompt_with_template(
+                prepared_text,
+                self.template,
+            )
 
-            # 调用 LLM
-            self.logger.info(f"[LLM] sending request with text length {len(prepared_text)} chars")
+            self.logger.info(f"[LLM] sending request with text length {len(prepared_text)} chars, template: {self.template_id}")
             llm_kwargs: Dict[str, Any] = {}
             if self._supports_strict_schema():
                 llm_kwargs.update(
                     {
-                        "json_schema": PAPER_DATA_JSON_SCHEMA,
-                        "schema_name": "paperinsight_paper_data",
+                        "json_schema": self.template.to_json_schema(),
+                        "schema_name": f"paperinsight_{self.template_id}_data",
                     }
                 )
             response = self.llm.generate_json(prompt, temperature=0.2, **llm_kwargs)
 
-            # 解析并校验
             paper_data = self._parse_and_validate(response)
 
             if paper_data:

@@ -3,9 +3,15 @@ Pydantic 数据模型定义
 
 根据 PRD v3.0 规范，定义论文数据提取的结构化模型。
 实现嵌套式 JSON Schema，确保实验参数与器件结构强绑定。
+
+支持多种研究领域：
+- OLED/LED/QLED 器件
+- 太阳能电池 (Perovskite Solar Cells)
+- 锂电池 (Li-ion Battery)
+- 传感器 (Sensors)
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 import re
 
@@ -95,6 +101,215 @@ class DeviceData(BaseModel):
         if v is None:
             return v
         # 移除首尾空白，压缩连续空白
+        return re.sub(r'\s+', ' ', v.strip())
+
+
+class SolarCellDeviceData(BaseModel):
+    """
+    太阳能电池器件数据模型
+    
+    包含 PCE、Jsc、Voc、FF 等光伏器件关键参数。
+    """
+    
+    model_config = ConfigDict(extra='forbid')
+    
+    device_label: Optional[str] = Field(
+        default=None,
+        description="器件标签，如 'Control', 'Champion', 'Device A' 等"
+    )
+    
+    structure: Optional[str] = Field(
+        default=None,
+        description="完整的器件结构，如 'FTO/TiO2/Perovskite/Spiro-OMeTAD/Au'"
+    )
+    
+    pce: Optional[str] = Field(
+        default=None,
+        description="光电转换效率，如 '25.5%' 或 'PCE = 24.8%'"
+    )
+    
+    jsc: Optional[str] = Field(
+        default=None,
+        description="短路电流密度，如 '25.5 mA/cm²'"
+    )
+    
+    voc: Optional[str] = Field(
+        default=None,
+        description="开路电压，如 '1.12 V'"
+    )
+    
+    ff: Optional[str] = Field(
+        default=None,
+        description="填充因子，如 '0.78' 或 '78%'"
+    )
+    
+    jv_curve: Optional[str] = Field(
+        default=None,
+        description="J-V 曲线特征描述"
+    )
+    
+    stability: Optional[str] = Field(
+        default=None,
+        description="器件稳定性，如 'maintained 90% after 1000 h'"
+    )
+    
+    hysteresis: Optional[str] = Field(
+        default=None,
+        description="迟滞效应描述"
+    )
+    
+    notes: Optional[str] = Field(
+        default=None,
+        description="其他重要备注或实验条件"
+    )
+    
+    @field_validator('pce', 'jsc', 'voc', 'ff', 'structure')
+    @classmethod
+    def clean_string(cls, v: Optional[str]) -> Optional[str]:
+        """清理字符串，移除多余空白"""
+        if v is None:
+            return v
+        return re.sub(r'\s+', ' ', v.strip())
+
+
+class BatteryDeviceData(BaseModel):
+    """
+    锂电池器件数据模型
+    
+    包含容量、循环稳定性、能量密度等电池关键参数。
+    """
+    
+    model_config = ConfigDict(extra='forbid')
+    
+    device_label: Optional[str] = Field(
+        default=None,
+        description="器件标签，如 'Control', 'Optimized', 'Sample A' 等"
+    )
+    
+    configuration: Optional[str] = Field(
+        default=None,
+        description="电池配置，如 'LiFePO4/graphite', 'NMC811/Si-C'"
+    )
+    
+    capacity: Optional[str] = Field(
+        default=None,
+        description="比容量，如 '180 mAh/g' 或 '容量保持率 95%'"
+    )
+    
+    cycling_stability: Optional[str] = Field(
+        default=None,
+        description="循环稳定性，如 '95% after 500 cycles'"
+    )
+    
+    energy_density: Optional[str] = Field(
+        default=None,
+        description="能量密度，如 '350 Wh/kg'"
+    )
+    
+    power_density: Optional[str] = Field(
+        default=None,
+        description="功率密度，如 '500 W/kg'"
+    )
+    
+    coulombic_efficiency: Optional[str] = Field(
+        default=None,
+        description="库伦效率，如 '99.5%'"
+    )
+    
+    rate_capability: Optional[str] = Field(
+        default=None,
+        description="倍率性能，如 '120 mAh/g @ 5C'"
+    )
+    
+    voltage: Optional[str] = Field(
+        default=None,
+        description="工作电压，如 '3.7 V'"
+    )
+    
+    notes: Optional[str] = Field(
+        default=None,
+        description="其他重要备注或实验条件"
+    )
+    
+    @field_validator('capacity', 'cycling_stability', 'energy_density', 'configuration')
+    @classmethod
+    def clean_string(cls, v: Optional[str]) -> Optional[str]:
+        """清理字符串，移除多余空白"""
+        if v is None:
+            return v
+        return re.sub(r'\s+', ' ', v.strip())
+
+
+class SensorDeviceData(BaseModel):
+    """
+    传感器器件数据模型
+    
+    包含灵敏度、检测限、选择性等传感器关键参数。
+    """
+    
+    model_config = ConfigDict(extra='forbid')
+    
+    device_label: Optional[str] = Field(
+        default=None,
+        description="器件标签，如 'Sensor A', 'Optimized sensor' 等"
+    )
+    
+    sensor_type: Optional[str] = Field(
+        default=None,
+        description="传感器类型，如 'Electrochemical', 'Optical', 'Piezoelectric'"
+    )
+    
+    target_analyte: Optional[str] = Field(
+        default=None,
+        description="目标分析物，如 'Glucose', 'H2O2', 'Heavy metals'"
+    )
+    
+    sensitivity: Optional[str] = Field(
+        default=None,
+        description="灵敏度，如 '150 μA/mM·cm²' 或 '0.5 V/pH'"
+    )
+    
+    detection_limit: Optional[str] = Field(
+        default=None,
+        description="检测限，如 '10 nM' 或 'LOD = 5 ppb'"
+    )
+    
+    linear_range: Optional[str] = Field(
+        default=None,
+        description="线性范围，如 '0.1-100 μM'"
+    )
+    
+    selectivity: Optional[str] = Field(
+        default=None,
+        description="选择性描述，如 'High selectivity against interferents'"
+    )
+    
+    response_time: Optional[str] = Field(
+        default=None,
+        description="响应时间，如 '< 5 s' 或 '3 s'"
+    )
+    
+    stability: Optional[str] = Field(
+        default=None,
+        description="稳定性，如 '95% after 30 days'"
+    )
+    
+    reproducibility: Optional[str] = Field(
+        default=None,
+        description="重现性，如 'RSD = 3.5%'"
+    )
+    
+    notes: Optional[str] = Field(
+        default=None,
+        description="其他重要备注或实验条件"
+    )
+    
+    @field_validator('sensitivity', 'detection_limit', 'target_analyte', 'sensor_type')
+    @classmethod
+    def clean_string(cls, v: Optional[str]) -> Optional[str]:
+        """清理字符串，移除多余空白"""
+        if v is None:
+            return v
         return re.sub(r'\s+', ' ', v.strip())
 
 

@@ -7,6 +7,7 @@ import {
   modeLabel,
   defaultOutputDir
 } from '../utils';
+import DropZone from './DropZone';
 
 // 优化：创建可重用的子组件并使用React.memo
 const AlertComponent = React.memo(({ alert, onOpenSettings, onReopenOnboarding, onUseRegexMode, onApplyRecommendation }) => (
@@ -84,7 +85,8 @@ function AnalyzeTab({
   onOpenSettings,
   onReopenOnboarding,
   onFocusInput,
-  onApplyRecommendation
+  onApplyRecommendation,
+  onFilesDropped
 }) {
   // 优化：使用useCallback缓存事件处理函数
   const handleModeChange = useCallback((e) => {
@@ -197,6 +199,20 @@ function AnalyzeTab({
               </select>
             </label>
           </div>
+        </div>
+
+        <div className="dropzone-section" style={{ marginTop: '24px' }}>
+          <div className="section-header" style={{ marginBottom: '12px' }}>
+            <span style={{ fontSize: '0.92rem', color: 'var(--muted)' }}>
+              或者直接拖拽 PDF 文件
+            </span>
+          </div>
+          <DropZone
+            onFilesSelected={onFilesDropped}
+            disabled={job.running}
+            maxFiles={50}
+            maxSizeMB={100}
+          />
         </div>
       </section>
 

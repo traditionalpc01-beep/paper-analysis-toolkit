@@ -1,5 +1,6 @@
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useState } from 'react';
 import { formatImpactFactor, classifyErrorItem, buildFailureFixSuggestions, matchesQuery } from '../utils';
+import ExportModal from './ExportModal';
 
 // 优化：创建可重用的子组件并使用React.memo
 const ReportCard = React.memo(({ label, path }) => (
@@ -64,7 +65,8 @@ const LogItem = React.memo(({ log, isError }) => (
 ));
 
 function ResultsTab({ job, resultQuery, setResultQuery, resultScope, setResultScope }) {
-  // 优化：使用useCallback缓存事件处理函数
+  const [exportModalVisible, setExportModalVisible] = useState(false);
+
   const handleSearchChange = useCallback((e) => {
     setResultQuery(e.target.value);
   }, [setResultQuery]);
@@ -72,6 +74,14 @@ function ResultsTab({ job, resultQuery, setResultQuery, resultScope, setResultSc
   const handleScopeChange = useCallback((scope) => {
     setResultScope(scope);
   }, [setResultScope]);
+
+  const handleOpenExportModal = useCallback(() => {
+    setExportModalVisible(true);
+  }, []);
+
+  const handleCloseExportModal = useCallback(() => {
+    setExportModalVisible(false);
+  }, []);
 
   const filteredResults = useMemo(() => {
     const stats = job.stats || {};
@@ -87,6 +97,11 @@ function ResultsTab({ job, resultQuery, setResultQuery, resultScope, setResultSc
 
     return { reports, successItems, errorItems };
   }, [job.stats, resultQuery]);
+
+  const exportItems = useMemo(() => {
+    const stats = job.stats || {};
+    return stats.successItems || [];
+  }, [job.stats]);
 
   const groupedErrorItems = useMemo(() => {
     const groups = new Map();
@@ -154,7 +169,12 @@ function ResultsTab({ job, resultQuery, setResultQuery, resultScope, setResultSc
           </section>
 
           <section className="reports-section">
-            <h2>生成的报告</h2>
+            <div className="section-header">
+              <h2>生成的报告</h2>
+              <button className="ghost small" onClick={handleOpenExportModal}>
+                导出数据
+              </button>
+            </div>
             <div className="reports-grid">
               {filteredResults.reports.map(([label, path]) => (
                 <ReportCard key={label} label={label} path={path} />
@@ -237,6 +257,13 @@ function ResultsTab({ job, resultQuery, setResultQuery, resultScope, setResultSc
           <p>请在分析工作台选择论文目录并开始分析。</p>
         </section>
       )}
+
+      <ExportModal
+        visible={exportModalVisible}
+        items={exportItems}
+        outputDir={job.outputDir}
+        onClose={handleCloseExportModal}
+      />
     </div>
   );
 }

@@ -22,10 +22,37 @@ from paperinsight.utils.terminal import SafeOutputStream
 
 PROTOCOL_STDOUT = sys.stdout
 
+PROGRESS_STAGE_PARSING = "parsing"
+PROGRESS_STAGE_EXTRACTING = "extracting"
+PROGRESS_STAGE_FETCHING_IF = "fetching_if"
+PROGRESS_STAGE_CLEANING = "cleaning"
+PROGRESS_STAGE_VALIDATING = "validating"
+
 
 def _emit(payload: dict[str, Any]) -> None:
     PROTOCOL_STDOUT.write(json.dumps(payload, ensure_ascii=False) + "\n")
     PROTOCOL_STDOUT.flush()
+
+
+def _emit_stage_progress(
+    current_file: str,
+    current_stage: str,
+    completed_count: int,
+    total_count: int,
+    stage_message: str = "",
+) -> None:
+    progress_percent = round((completed_count / total_count) * 100, 1) if total_count > 0 else 0
+    _emit(
+        {
+            "type": "stage-progress",
+            "currentFile": current_file,
+            "currentStage": current_stage,
+            "stageMessage": stage_message,
+            "completedCount": completed_count,
+            "totalCount": total_count,
+            "progressPercent": progress_percent,
+        }
+    )
 
 
 def _read_json_stdin() -> dict[str, Any]:
@@ -583,6 +610,13 @@ def command_analyze() -> int:
         )
 
         for index, pdf_path in enumerate(pdf_files, start=1):
+            _emit_stage_progress(
+                current_file=pdf_path.name,
+                current_stage=PROGRESS_STAGE_PARSING,
+                completed_count=index - 1,
+                total_count=len(pdf_files),
+                stage_message="正在解析 PDF 文档...",
+            )
             _emit(
                 {
                     "type": "progress",
@@ -597,6 +631,13 @@ def command_analyze() -> int:
                 pdf_path=pdf_path,
                 max_pages=request.get("maxPages") or None,
                 use_cache=runtime_config.get("cache", {}).get("enabled", True),
+                progress_callback=lambda stage, msg: _emit_stage_progress(
+                    current_file=pdf_path.name,
+                    current_stage=stage,
+                    completed_count=index - 1,
+                    total_count=len(pdf_files),
+                    stage_message=msg,
+                ),
             )
             pipeline._collect_batch_item_result(
                 pdf_path=pdf_path,

@@ -13,5 +13,9 @@ contextBridge.exposeInMainWorld('paperInsight', {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('analysis:event', handler);
     return () => ipcRenderer.removeListener('analysis:event', handler);
-  }
+  },
+  getHistoryList: (options) => ipcRenderer.invoke('history:list', options),
+  getHistoryRecord: (recordId) => ipcRenderer.invoke('history:get', recordId),
+  deleteHistoryRecord: (recordId) => ipcRenderer.invoke('history:delete', recordId),
+  clearHistory: () => ipcRenderer.invoke('history:clear')
 });

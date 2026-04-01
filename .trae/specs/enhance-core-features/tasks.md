@@ -1,13 +1,13 @@
 # Tasks
 
-- [ ] Task 1: 扩展研究领域支持 - 创建配置化提取模板系统
-  - [ ] SubTask 1.1: 设计提取模板配置数据结构
-  - [ ] SubTask 1.2: 创建太阳能电池（Perovskite Solar Cells）模板配置
-  - [ ] SubTask 1.3: 创建锂电池（Li-ion Battery）模板配置
-  - [ ] SubTask 1.4: 创建传感器（Sensors）模板配置
-  - [ ] SubTask 1.5: 修改 extractor.py 支持模板选择和加载
-  - [ ] SubTask 1.6: 更新 schemas.py 支持新领域数据模型
-  - [ ] SubTask 1.7: 更新 CLI 支持模板选择参数
+- [x] Task 1: 扩展研究领域支持 - 创建配置化提取模板系统
+  - [x] SubTask 1.1: 设计提取模板配置数据结构
+  - [x] SubTask 1.2: 创建太阳能电池（Perovskite Solar Cells）模板配置
+  - [x] SubTask 1.3: 创建锂电池（Li-ion Battery）模板配置
+  - [x] SubTask 1.4: 创建传感器（Sensors）模板配置
+  - [x] SubTask 1.5: 修改 extractor.py 支持模板选择和加载
+  - [x] SubTask 1.6: 更新 schemas.py 支持新领域数据模型
+  - [x] SubTask 1.7: 更新 CLI 支持模板选择参数
 
 - [ ] Task 2: 桌面应用增强 - 实时进度显示
   - [ ] SubTask 2.1: 设计进度数据结构和通信协议
@@ -16,11 +16,11 @@
   - [ ] SubTask 2.4: 创建 ProgressIndicator 组件显示处理阶段
   - [ ] SubTask 2.5: 创建 BatchProgressBar 组件显示批量进度
 
-- [ ] ] Task 3: 桌面应用增强 - 拖拽上传功能
-  - [ ] SubTask 3.1: 创建 DropZone 组件支持拖拽区域
-  - [ ] SubTask 3.2: 实现文件类型验证（仅接受 PDF）
-  - [ ] SubTask 3.3: 实现多文件拖拽处理逻辑
-  - [ ] SubTask 3.4: 添加拖拽视觉反馈效果
+- [x] Task 3: 桌面应用增强 - 拖拽上传功能
+  - [x] SubTask 3.1: 创建 DropZone 组件支持拖拽区域
+  - [x] SubTask 3.2: 实现文件类型验证（仅接受 PDF）
+  - [x] SubTask 3.3: 实现多文件拖拽处理逻辑
+  - [x] SubTask 3.4: 添加拖拽视觉反馈效果
 
 - [ ] Task 4: 桌面应用增强 - 结果预览和筛选
   - [ ] SubTask 4.1: 创建 ResultsPreview 组件显示结果表格
@@ -28,16 +28,16 @@
   - [ ] SubTask 4.3: 创建 FilterBar 组件支持条件筛选
   - [ ] SubTask 4.4: 实现实时筛选逻辑
 
-- [ ] Task 5: 桌面应用增强 - 导出格式选择
-  - [ ] SubTask 5.1: 创建 ExportModal 组件提供格式选项
-  - [ ] SubTask 5.2: 实现 CSV 导出功能
-  - [ ] SubTask 5.3: 更新导出逻辑支持用户选择格式
+- [x] Task 5: 桌面应用增强 - 导出格式选择
+  - [x] SubTask 5.1: 创建 ExportModal 组件提供格式选项
+  - [x] SubTask 5.2: 实现 CSV 导出功能
+  - [x] SubTask 5.3: 更新导出逻辑支持用户选择格式
 
-- [ ] Task 6: 桌面应用增强 - 历史记录管理
-  - [ ] SubTask 6.1: 设计历史记录数据存储方案（本地数据库或文件）
-  - [ ] SubTask 6.2: 创建 HistoryManager 服务管理历史记录
-  - [ ] SubTask 6.3: 创建 HistoryPanel 组件显示历史列表
-  - [ ] SubTask 6.4: 实现历史记录加载和删除功能
+- [x] Task 6: 桌面应用增强 - 历史记录管理
+  - [x] SubTask 6.1: 设计历史记录数据存储方案（本地数据库或文件）
+  - [x] SubTask 6.2: 创建 HistoryManager 服务管理历史记录
+  - [x] SubTask 6.3: 创建 HistoryPanel 组件显示历史列表
+  - [x] SubTask 6.4: 实现历史记录加载和删除功能
 
 - [ ] Task 7: Prompt 工程优化
   - [ ] SubTask 7.1: 重构 prompt_templates.py 使用结构化模板
