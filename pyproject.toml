@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paperinsight"
-version = "3.0.7"
-description = "智能科研论文分析工具 v3.0 - MinerU + LLM 语义提取"
+version = "4.1.0"
+description = "智能科研论文分析工具 v4.1 - MinerU + LLM 语义提取"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
