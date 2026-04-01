@@ -1,7 +1,7 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
-const path = require('node:path');
-const fs = require('node:fs');
-const { spawn } = require('node:child_process');
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import path from 'node:path';
+import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 
 const isDev = !app.isPackaged;
 let mainWindow = null;
@@ -216,6 +216,9 @@ function validateAnalysisPayload(payload = {}) {
 }
 
 function createWindow() {
+  const isMac = process.platform === 'darwin';
+  const isWindows = process.platform === 'win32';
+  
   mainWindow = new BrowserWindow({
     width: 1480,
     height: 960,
@@ -224,6 +227,18 @@ function createWindow() {
     backgroundColor: '#f3efe4',
     title: 'PaperInsight',
     icon: appIconPath(),
+    // 平台特定配置
+    ...(isMac && {
+      // macOS 特定设置
+      titleBarStyle: 'hiddenInset',
+      vibrancy: 'under-window',
+      backgroundColor: 'transparent'
+    }),
+    ...(isWindows && {
+      // Windows 特定设置
+      frame: true,
+      titleBarStyle: 'default'
+    }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -392,7 +407,15 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  // 平台特定的退出逻辑
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+// 平台特定的应用激活逻辑
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
   }
 });
