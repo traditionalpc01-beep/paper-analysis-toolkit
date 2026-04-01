@@ -1,6 +1,9 @@
 import React, { useMemo, useCallback, useState } from 'react';
 import { formatImpactFactor, classifyErrorItem, buildFailureFixSuggestions, matchesQuery } from '../utils';
 import ExportModal from './ExportModal';
+import FilterBar from './FilterBar';
+import ResultsPreview from './ResultsPreview';
+import FeedbackModal from './FeedbackModal';
 
 // 优化：创建可重用的子组件并使用React.memo
 const ReportCard = React.memo(({ label, path }) => (
@@ -66,6 +69,16 @@ const LogItem = React.memo(({ log, isError }) => (
 
 function ResultsTab({ job, resultQuery, setResultQuery, resultScope, setResultScope }) {
   const [exportModalVisible, setExportModalVisible] = useState(false);
+  const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [filters, setFilters] = useState({
+    title: '',
+    journal: '',
+    year: '',
+    impactFactor: '',
+    bestEqe: ''
+  });
+  const [viewMode, setViewMode] = useState('table');
 
   const handleSearchChange = useCallback((e) => {
     setResultQuery(e.target.value);
@@ -83,20 +96,139 @@ function ResultsTab({ job, resultQuery, setResultQuery, resultScope, setResultSc
     setExportModalVisible(false);
   }, []);
 
+  const handleFilterChange = useCallback((newFilters) => {
+    setFilters(newFilters);
+  }, []);
+
+  const handleViewModeChange = useCallback((mode) => {
+    setViewMode(mode);
+  }, []);
+
+  const handleEditClick = useCallback((item) => {
+    setEditingItem(item);
+    setFeedbackModalVisible(true);
+  }, []);
+
+  const handleFeedbackSave = useCallback(async (params) => {
+    try {
+      await window.paperInsight.saveFeedback(params);
+      return true;
+    } catch (error) {
+      throw new Error(error.message || '保存反馈失败');
+    }
+  }, []);
+
+  const handleFeedbackClose = useCallback(() => {
+    setFeedbackModalVisible(false);
+    setEditingItem(null);
+  }, []);
+
+  const parseNumericFilter = useCallback((filterValue) => {
+    if (!filterValue || filterValue.trim() === '') {
+      return null;
+    }
+    const trimmed = filterValue.trim();
+    
+    if (trimmed.startsWith('>')) {
+      const value = parseFloat(trimmed.slice(1));
+      if (!isNaN(value)) return { op: 'gt', value };
+    } else if (trimmed.startsWith('<')) {
+      const value = parseFloat(trimmed.slice(1));
+      if (!isNaN(value)) return { op: 'lt', value };
+    } else if (trimmed.startsWith('>=')) {
+      const value = parseFloat(trimmed.slice(2));
+      if (!isNaN(value)) return { op: 'gte', value };
+    } else if (trimmed.startsWith('<=')) {
+      const value = parseFloat(trimmed.slice(2));
+      if (!isNaN(value)) return { op: 'lte', value };
+    } else if (trimmed.includes('-')) {
+      const parts = trimmed.split('-');
+      if (parts.length === 2) {
+        const min = parseFloat(parts[0]);
+        const max = parseFloat(parts[1]);
+        if (!isNaN(min) && !isNaN(max)) return { op: 'range', min, max };
+      }
+    } else {
+      const value = parseFloat(trimmed);
+      if (!isNaN(value)) return { op: 'eq', value };
+    }
+    return null;
+  }, []);
+
+  const matchesNumericFilter = useCallback((itemValue, filter) => {
+    if (!filter) return true;
+    
+    const numValue = parseFloat(String(itemValue || '').replace(/[^\d.-]/g, ''));
+    if (isNaN(numValue)) return false;
+
+    switch (filter.op) {
+      case 'gt': return numValue > filter.value;
+      case 'lt': return numValue < filter.value;
+      case 'gte': return numValue >= filter.value;
+      case 'lte': return numValue <= filter.value;
+      case 'range': return numValue >= filter.min && numValue <= filter.max;
+      case 'eq': return numValue === filter.value;
+      default: return true;
+    }
+  }, []);
+
+  const matchesAdvancedFilters = useCallback((item) => {
+    if (filters.title && filters.title.trim() !== '') {
+      const titleFilter = filters.title.toLowerCase();
+      if (!String(item.title || '').toLowerCase().includes(titleFilter)) {
+        return false;
+      }
+    }
+
+    if (filters.journal && filters.journal.trim() !== '') {
+      const journalFilter = filters.journal.toLowerCase();
+      if (!String(item.journal || '').toLowerCase().includes(journalFilter)) {
+        return false;
+      }
+    }
+
+    if (filters.year && filters.year.trim() !== '') {
+      const yearFilter = parseNumericFilter(filters.year);
+      if (yearFilter && !matchesNumericFilter(item.year, yearFilter)) {
+        return false;
+      }
+    }
+
+    if (filters.impactFactor && filters.impactFactor.trim() !== '') {
+      const ifFilter = parseNumericFilter(filters.impactFactor);
+      if (ifFilter && !matchesNumericFilter(item.impactFactor, ifFilter)) {
+        return false;
+      }
+    }
+
+    if (filters.bestEqe && filters.bestEqe.trim() !== '') {
+      const eqeFilter = parseNumericFilter(filters.bestEqe);
+      if (eqeFilter && !matchesNumericFilter(item.bestEqe, eqeFilter)) {
+        return false;
+      }
+    }
+
+    return true;
+  }, [filters, parseNumericFilter, matchesNumericFilter]);
+
   const filteredResults = useMemo(() => {
     const stats = job.stats || {};
     const reports = Object.entries(stats.reportFiles || {}).filter(([label, targetPath]) =>
       matchesQuery([label, targetPath], resultQuery)
     );
-    const successItems = (stats.successItems || []).filter((item) =>
+    
+    let successItems = (stats.successItems || []).filter((item) =>
       matchesQuery([item.file, item.title, item.journal, item.impactFactor, item.bestEqe], resultQuery)
     );
+
+    successItems = successItems.filter(matchesAdvancedFilters);
+
     const errorItems = (stats.errorItems || []).filter((item) =>
       matchesQuery([item.file, item.message, item.context, item.type], resultQuery)
     );
 
     return { reports, successItems, errorItems };
-  }, [job.stats, resultQuery]);
+  }, [job.stats, resultQuery, matchesAdvancedFilters]);
 
   const exportItems = useMemo(() => {
     const stats = job.stats || {};
@@ -184,12 +316,46 @@ function ResultsTab({ job, resultQuery, setResultQuery, resultScope, setResultSc
 
           {(resultScope === 'all' || resultScope === 'success') && filteredResults.successItems.length > 0 && (
             <section className="success-items">
-              <h2>成功分析的论文</h2>
-              <div className="items-grid">
-                {filteredResults.successItems.map((item, index) => (
-                  <SuccessItemCard key={index} item={item} />
-                ))}
+              <div className="section-header">
+                <h2>成功分析的论文</h2>
+                <div className="view-mode-switch">
+                  <button
+                    className={`view-mode-btn ${viewMode === 'table' ? 'active' : ''}`}
+                    onClick={() => handleViewModeChange('table')}
+                  >
+                    表格视图
+                  </button>
+                  <button
+                    className={`view-mode-btn ${viewMode === 'card' ? 'active' : ''}`}
+                    onClick={() => handleViewModeChange('card')}
+                  >
+                    卡片视图
+                  </button>
+                </div>
               </div>
+
+              <FilterBar
+                filters={filters}
+                onFilterChange={handleFilterChange}
+                totalCount={(job.stats?.successItems || []).length}
+                filteredCount={filteredResults.successItems.length}
+              />
+
+              {viewMode === 'table' ? (
+                <ResultsPreview
+                  items={filteredResults.successItems}
+                  onRowClick={(item) => {
+                    console.log('Selected item:', item);
+                  }}
+                  onEditClick={handleEditClick}
+                />
+              ) : (
+                <div className="items-grid">
+                  {filteredResults.successItems.map((item, index) => (
+                    <SuccessItemCard key={index} item={item} />
+                  ))}
+                </div>
+              )}
             </section>
           )}
 
@@ -263,6 +429,14 @@ function ResultsTab({ job, resultQuery, setResultQuery, resultScope, setResultSc
         items={exportItems}
         outputDir={job.outputDir}
         onClose={handleCloseExportModal}
+      />
+
+      <FeedbackModal
+        visible={feedbackModalVisible}
+        item={editingItem}
+        outputDir={job.outputDir}
+        onSave={handleFeedbackSave}
+        onClose={handleFeedbackClose}
       />
     </div>
   );

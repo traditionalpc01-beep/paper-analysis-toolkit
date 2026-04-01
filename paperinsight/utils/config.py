@@ -89,6 +89,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "enable_lite_backfill": True,
         },
     },
+    # 多轮对话验证配置（v4.0 新增）
+    "multi_turn": {
+        "enabled": False,
+        "enable_follow_up": True,
+        "max_follow_ups": 1,
+    },
     # Web 搜索配置
     "web_search": {
         "enabled": True,

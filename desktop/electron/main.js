@@ -9,6 +9,16 @@ import {
   deleteHistoryRecord,
   clearHistory
 } from './historyManager.js';
+import {
+  addFeedbackRecord,
+  getFeedbackList,
+  getFeedbackRecord,
+  deleteFeedbackRecord,
+  clearFeedback,
+  updateOriginalJsonFile,
+  exportFeedbackToJson,
+  getFeedbackStats
+} from './feedbackManager.js';
 
 const isDev = !app.isPackaged;
 let mainWindow = null;
@@ -435,6 +445,50 @@ ipcMain.handle('history:delete', async (_event, recordId) => {
 
 ipcMain.handle('history:clear', async () => {
   return clearHistory();
+});
+
+ipcMain.handle('feedback:save', async (_event, params) => {
+  const record = addFeedbackRecord(params);
+  
+  if (params.outputDir && params.modifiedItem) {
+    const updateResult = updateOriginalJsonFile({
+      outputDir: params.outputDir,
+      file: params.originalItem?.file,
+      modifiedItem: params.modifiedItem
+    });
+    
+    return {
+      success: true,
+      record,
+      jsonUpdate: updateResult
+    };
+  }
+  
+  return { success: true, record };
+});
+
+ipcMain.handle('feedback:list', async (_event, options = {}) => {
+  return getFeedbackList(options);
+});
+
+ipcMain.handle('feedback:get', async (_event, recordId) => {
+  return getFeedbackRecord(recordId);
+});
+
+ipcMain.handle('feedback:delete', async (_event, recordId) => {
+  return deleteFeedbackRecord(recordId);
+});
+
+ipcMain.handle('feedback:clear', async () => {
+  return clearFeedback();
+});
+
+ipcMain.handle('feedback:export', async (_event, options = {}) => {
+  return exportFeedbackToJson(options);
+});
+
+ipcMain.handle('feedback:stats', async () => {
+  return getFeedbackStats();
 });
 
 app.whenReady().then(() => {

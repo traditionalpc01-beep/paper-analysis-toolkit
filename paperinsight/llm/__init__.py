@@ -23,19 +23,23 @@ llm:
 from paperinsight.llm.base import BaseLLM
 from paperinsight.llm.prompt_templates import (
     format_bilingual_postprocess_prompt,
-    format_extraction_prompt,
     format_extraction_prompt_v3,
-    format_journal_prompt,
-    format_optimization_prompt,
+    format_extraction_prompt_with_template,
+    format_lite_paper_info_backfill_prompt,
+    MultiTurnValidator,
+    PromptBuilder,
+    FewShotExampleLibrary,
 )
 
 __all__ = [
     "BaseLLM",
     "format_bilingual_postprocess_prompt",
-    "format_extraction_prompt",
     "format_extraction_prompt_v3",
-    "format_journal_prompt",
-    "format_optimization_prompt",
+    "format_extraction_prompt_with_template",
+    "format_lite_paper_info_backfill_prompt",
+    "MultiTurnValidator",
+    "PromptBuilder",
+    "FewShotExampleLibrary",
 ]
 
 

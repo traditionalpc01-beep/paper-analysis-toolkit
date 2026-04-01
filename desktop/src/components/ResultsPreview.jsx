@@ -96,7 +96,7 @@ const TableRow = React.memo(({ item, columns, onClick, isSelected }) => (
   </tr>
 ));
 
-function ResultsPreview({ items, onRowClick }) {
+function ResultsPreview({ items, onRowClick, onEditClick }) {
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
   const [selectedItem, setSelectedItem] = useState(null);
 
@@ -173,9 +173,16 @@ function ResultsPreview({ items, onRowClick }) {
         <div className="result-detail-panel">
           <div className="detail-header">
             <h3>详细信息</h3>
-            <button className="ghost small" onClick={() => setSelectedItem(null)}>
-              关闭
-            </button>
+            <div className="detail-actions">
+              {onEditClick && (
+                <button className="ghost small" onClick={() => onEditClick(selectedItem)}>
+                  修正
+                </button>
+              )}
+              <button className="ghost small" onClick={() => setSelectedItem(null)}>
+                关闭
+              </button>
+            </div>
           </div>
           <div className="detail-content">
             {TABLE_COLUMNS.map(column => (

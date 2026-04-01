@@ -17,5 +17,12 @@ contextBridge.exposeInMainWorld('paperInsight', {
   getHistoryList: (options) => ipcRenderer.invoke('history:list', options),
   getHistoryRecord: (recordId) => ipcRenderer.invoke('history:get', recordId),
   deleteHistoryRecord: (recordId) => ipcRenderer.invoke('history:delete', recordId),
-  clearHistory: () => ipcRenderer.invoke('history:clear')
+  clearHistory: () => ipcRenderer.invoke('history:clear'),
+  saveFeedback: (params) => ipcRenderer.invoke('feedback:save', params),
+  getFeedbackList: (options) => ipcRenderer.invoke('feedback:list', options),
+  getFeedbackRecord: (recordId) => ipcRenderer.invoke('feedback:get', recordId),
+  deleteFeedbackRecord: (recordId) => ipcRenderer.invoke('feedback:delete', recordId),
+  clearFeedback: () => ipcRenderer.invoke('feedback:clear'),
+  exportFeedback: (options) => ipcRenderer.invoke('feedback:export', options),
+  getFeedbackStats: () => ipcRenderer.invoke('feedback:stats')
 });
