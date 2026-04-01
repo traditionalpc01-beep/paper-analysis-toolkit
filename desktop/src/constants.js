@@ -1,5 +1,6 @@
 const tabs = [
   { id: 'analyze', label: '分析工作台' },
+  { id: 'history', label: '历史记录' },
   { id: 'settings', label: '服务配置' },
   { id: 'help', label: '关于与帮助' }
 ];

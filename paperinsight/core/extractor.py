@@ -6,6 +6,7 @@
 2. 嵌套式 JSON Schema 输出
 3. Pydantic 数据校验
 4. 正则表达式兜底方案
+5. 支持多种研究领域的提取模板
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import ValidationError
 
@@ -25,6 +26,15 @@ from paperinsight.models.schemas import (
     DataSourceReference,
     OptimizationInfo,
     PAPER_DATA_JSON_SCHEMA,
+    SolarCellDeviceData,
+    BatteryDeviceData,
+    SensorDeviceData,
+)
+from paperinsight.models.templates import (
+    ExtractionTemplate,
+    get_template,
+    get_default_template,
+    TemplateType,
 )
 from paperinsight.parser.base import ParseResult
 from paperinsight.llm.base import BaseLLM
@@ -32,7 +42,10 @@ from paperinsight.llm import create_llm_client
 from paperinsight.llm.prompt_templates import (
     format_bilingual_postprocess_prompt,
     format_extraction_prompt_v3,
+    format_extraction_prompt_with_template,
     format_lite_paper_info_backfill_prompt,
+    MultiTurnValidator,
+    PromptBuilder,
 )
 from paperinsight.utils.logger import setup_logger
 from paperinsight.utils.pdf_utils import PDFProcessor
@@ -127,12 +140,15 @@ class DataExtractor:
         self,
         config: Optional[Dict[str, Any]] = None,
         use_llm: Optional[bool] = None,
+        template_id: Optional[str] = None,
     ):
         """
         初始化数据提取器
 
         Args:
             config: 配置字典，包含 LLM 配置等
+            use_llm: 是否使用 LLM（向后兼容参数）
+            template_id: 提取模板ID，支持 'oled', 'solar_cell', 'battery', 'sensor'
         """
         if use_llm is not None:
             config = dict(config or {})
@@ -146,10 +162,17 @@ class DataExtractor:
         self.llm_config = self.config.get("llm", {})
         self.logger = setup_logger("paperinsight.extractor")
 
-        # 初始化 LLM 客户端
+        self.template_id = template_id or self.config.get("template_id", "oled")
+        self.template = get_template(self.template_id) or get_default_template()
+        self.logger.info(f"[Template] using template: {self.template.template_name} ({self.template_id})")
+
         self.llm: Optional[BaseLLM] = None
         self.lite_backfill_llm: Optional[BaseLLM] = None
         self._init_llm_client()
+        
+        self.multi_turn_config = self.config.get("multi_turn", {})
+        self.multi_turn_validator: Optional[MultiTurnValidator] = None
+        self._init_multi_turn_validator()
 
     def _init_llm_client(self) -> None:
         """初始化 LLM 客户端"""
@@ -208,6 +231,23 @@ class DataExtractor:
             self.logger.warning(f"[LLM] lite backfill model init failed: {e}")
             return None
 
+    def _init_multi_turn_validator(self) -> None:
+        enable_multi_turn = self.multi_turn_config.get("enabled", False)
+        if not enable_multi_turn:
+            self.logger.info("[MultiTurn] disabled")
+            return
+
+        try:
+            self.multi_turn_validator = MultiTurnValidator(
+                template_id=self.template_id,
+                enable_follow_up=self.multi_turn_config.get("enable_follow_up", True),
+                max_follow_ups=self.multi_turn_config.get("max_follow_ups", 1),
+            )
+            self.logger.info(f"[MultiTurn] validator initialized for template: {self.template_id}")
+        except Exception as e:
+            self.logger.warning(f"[MultiTurn] validator init failed: {e}")
+            self.multi_turn_validator = None
+
     def extract(
         self,
         markdown_text: str,
@@ -256,28 +296,31 @@ class DataExtractor:
         try:
             prepared_text = self._prepare_llm_input(text)
 
-            # 构建 Prompt
-            prompt = format_extraction_prompt_v3(prepared_text)
+            prompt = format_extraction_prompt_with_template(
+                prepared_text,
+                self.template,
+            )
 
-            # 调用 LLM
-            self.logger.info(f"[LLM] sending request with text length {len(prepared_text)} chars")
+            self.logger.info(f"[LLM] sending request with text length {len(prepared_text)} chars, template: {self.template_id}")
             llm_kwargs: Dict[str, Any] = {}
             if self._supports_strict_schema():
                 llm_kwargs.update(
                     {
-                        "json_schema": PAPER_DATA_JSON_SCHEMA,
-                        "schema_name": "paperinsight_paper_data",
+                        "json_schema": self.template.to_json_schema(),
+                        "schema_name": f"paperinsight_{self.template_id}_data",
                     }
                 )
             response = self.llm.generate_json(prompt, temperature=0.2, **llm_kwargs)
 
-            # 解析并校验
             paper_data = self._parse_and_validate(response)
 
             if paper_data:
                 paper_data = self._backfill_paper_info_from_text(paper_data, prepared_text, parse_result)
                 paper_data = self._merge_inferred_devices(paper_data, prepared_text)
                 paper_data = self._sanitize_devices(paper_data)
+                
+                paper_data = self._run_multi_turn_validation(paper_data, prepared_text)
+                
                 paper_data = self._ensure_bilingual_text_fields(paper_data)
                 return ExtractionResult(
                     success=True,
@@ -295,6 +338,67 @@ class DataExtractor:
                 success=False,
                 error_message=f"LLM extraction failed: {str(e)}",
             )
+
+    def _run_multi_turn_validation(
+        self,
+        paper_data: PaperData,
+        text: str,
+    ) -> PaperData:
+        """运行多轮对话验证"""
+        if not self.multi_turn_validator or not self.llm:
+            return paper_data
+
+        try:
+            extraction_result = paper_data.model_dump()
+            validation_report = self.multi_turn_validator.validate(extraction_result, text)
+            
+            self.logger.info(
+                f"[MultiTurn] validation complete: is_complete={validation_report['is_complete']}, "
+                f"missing_critical={validation_report['missing_critical_fields']}"
+            )
+
+            if not validation_report.get("needs_follow_up"):
+                return paper_data
+
+            follow_up_prompt = self.multi_turn_validator.build_follow_up_prompt(
+                extraction_result,
+                validation_report,
+                text,
+            )
+            
+            if not follow_up_prompt:
+                return paper_data
+
+            self.logger.info("[MultiTurn] running follow-up extraction for missing fields")
+            
+            llm_kwargs: Dict[str, Any] = {}
+            if self._supports_strict_schema():
+                llm_kwargs.update(
+                    {
+                        "json_schema": self.template.to_json_schema(),
+                        "schema_name": f"paperinsight_{self.template_id}_data_followup",
+                    }
+                )
+            
+            follow_up_response = self.llm.generate_json(follow_up_prompt, temperature=0.2, **llm_kwargs)
+            follow_up_data = self._parse_and_validate(follow_up_response)
+            
+            if follow_up_data:
+                merged_result = self.multi_turn_validator.merge_results(
+                    extraction_result,
+                    follow_up_data.model_dump(),
+                )
+                merged_paper_data = self._parse_and_validate(merged_result)
+                if merged_paper_data:
+                    self.logger.info("[MultiTurn] successfully merged follow-up results")
+                    return merged_paper_data
+
+            self.logger.warning("[MultiTurn] follow-up extraction failed, keeping original result")
+            return paper_data
+
+        except Exception as e:
+            self.logger.warning(f"[MultiTurn] validation failed: {e}")
+            return paper_data
 
     def _ensure_bilingual_text_fields(self, paper_data: PaperData) -> PaperData:
         """对标题之后的自然语言字段补齐中英对照。"""

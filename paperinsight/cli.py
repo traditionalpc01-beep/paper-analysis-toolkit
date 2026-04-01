@@ -263,6 +263,7 @@ def analyze(
     recursive: bool = typer.Option(False, "--recursive", "-r", help="Recursively scan subdirectories."),
     max_pages: int = typer.Option(0, "--max-pages", help="Maximum pages per PDF. 0 means unlimited."),
     mode: str = typer.Option("auto", "--mode", "-m", help="Run mode: auto, api, regex."),
+    template: str = typer.Option("oled", "--template", "-t", help="Extraction template: oled, solar_cell, battery, sensor."),
     no_cache: bool = typer.Option(False, "--no-cache", help="Disable cache."),
     export_json: bool = typer.Option(False, "--json", help="Also export JSON report."),
     bilingual: Optional[bool] = typer.Option(None, "--bilingual/--no-bilingual", help="Enable bilingual output."),
@@ -372,6 +373,7 @@ def analyze(
     console.print(f"  PDF count:      {len(pdf_files)}")
     console.print(f"  Recursive:      {recursive}")
     console.print(f"  Mode:           {selected_mode}")
+    console.print(f"  Template:       {template}")
     console.print(f"  LLM:            {use_llm}")
     console.print(f"  PaddleX OCR:    {use_paddlex}")
     console.print(f"  MinerU batch:   {use_mineru_batch}")
@@ -396,12 +398,14 @@ def analyze(
         "cache": cache_config,
         "web_search": web_config,
         "output": {**output_config, "format": output_formats},
+        "template_id": template,
     }
 
     pipeline = AnalysisPipeline(
         output_dir=output_dir,
         config=full_config,
         cache_dir=cache_config.get("directory", ".cache"),
+        template_id=template,
     )
 
     progress_context = (

@@ -2,6 +2,11 @@
 # 该文件按当前运行时代码 paperinsight/utils/config.py::DEFAULT_CONFIG 对齐整理。
 # 建议先运行 `paperinsight config` 生成 ~/.paperinsight/config.yaml，再按需参考本文件微调。
 
+# 提取模板选择
+# 支持四种研究领域：oled / solar_cell / battery / sensor
+# 也可通过命令行参数 --template 或 -t 覆盖
+template_id: oled
+
 mineru:
   enabled: true
   mode: "api"  # api 或 cli
@@ -46,6 +51,11 @@ llm:
     base_url: "https://api.longcat.chat/openai"
     backfill_model: "LongCat-Flash-Lite"
     enable_lite_backfill: true
+
+multi_turn:
+  enabled: false
+  enable_follow_up: true
+  max_follow_ups: 1
 
 web_search:
   enabled: true

@@ -16,6 +16,9 @@ import AnalyzeTab from './components/AnalyzeTab';
 import SettingsTab from './components/SettingsTab';
 import HelpTab from './components/HelpTab';
 import ResultsTab from './components/ResultsTab';
+import HistoryPanel from './components/HistoryPanel';
+import ProgressIndicator from './components/ProgressIndicator';
+import BatchProgressBar from './components/BatchProgressBar';
 
 // 优化：使用React.memo包装组件，减少不必要的重渲染
 const MemoizedAnalyzeTab = React.memo(AnalyzeTab);
@@ -23,6 +26,7 @@ const MemoizedSettingsTab = React.memo(SettingsTab);
 const MemoizedHelpTab = React.memo(HelpTab);
 const MemoizedResultsTab = React.memo(ResultsTab);
 const MemoizedOnboardingModal = React.memo(OnboardingModal);
+const MemoizedHistoryPanel = React.memo(HistoryPanel);
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('analyze');
@@ -43,6 +47,9 @@ export default function App() {
     total: 0,
     completed: 0,
     currentFile: '',
+    currentStage: '',
+    stageMessage: '',
+    progressPercent: 0,
     logs: [],
     stats: null,
     outputDir: '',
@@ -97,10 +104,26 @@ export default function App() {
               total: event.total,
               completed: 0,
               currentFile: '',
+              currentStage: '',
+              stageMessage: '',
+              progressPercent: 0,
               outputDir: event.outputDir || current.outputDir,
               launch: event.launch,
               logs: nextLogs,
               stats: null
+            };
+          }
+
+          if (event.type === 'stage-progress') {
+            return {
+              ...current,
+              currentFile: event.currentFile,
+              currentStage: event.currentStage,
+              stageMessage: event.stageMessage || '',
+              completed: event.completedCount,
+              total: event.totalCount,
+              progressPercent: event.progressPercent || 0,
+              logs: nextLogs
             };
           }
 
@@ -131,6 +154,9 @@ export default function App() {
               completed: event.stats.pdfCount,
               total: event.stats.pdfCount,
               currentFile: '',
+              currentStage: '',
+              stageMessage: '',
+              progressPercent: 100,
               outputDir: event.outputDir || current.outputDir,
               stats: event.stats,
               logs: nextLogs
@@ -356,7 +382,64 @@ export default function App() {
   }, [config]);
 
   const handleFocusInput = useCallback(() => {
-    // 可以添加逻辑来聚焦到输入字段
+  }, []);
+
+  const handleFilesDropped = useCallback(async (files) => {
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    const filePaths = files.map(file => file.path || file.name);
+    
+    if (filePaths.length === 1) {
+      const singleFile = files[0];
+      const dirPath = singleFile.path ? singleFile.path.substring(0, singleFile.path.lastIndexOf('/')) : '';
+      
+      if (dirPath) {
+        setRunOptions((current) => ({
+          ...current,
+          pdfDir: dirPath,
+          ...(current.outputDir ? {} : { outputDir: `${dirPath}/output` })
+        }));
+      }
+    } else {
+      const paths = files.map(f => f.path).filter(Boolean);
+      if (paths.length > 0) {
+        const commonDir = paths.reduce((common, path) => {
+          const parts = path.split('/');
+          const commonParts = common.split('/');
+          const shared = [];
+          for (let i = 0; i < Math.min(parts.length - 1, commonParts.length); i++) {
+            if (parts[i] === commonParts[i]) {
+              shared.push(parts[i]);
+            } else {
+              break;
+            }
+          }
+          return shared.join('/');
+        }, paths[0].substring(0, paths[0].lastIndexOf('/')));
+
+        if (commonDir) {
+          setRunOptions((current) => ({
+            ...current,
+            pdfDir: commonDir,
+            ...(current.outputDir ? {} : { outputDir: `${commonDir}/output` })
+          }));
+        }
+      }
+    }
+
+    setJob((current) => ({
+      ...current,
+      logs: [
+        {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          text: `已选择 ${files.length} 个 PDF 文件`,
+          type: 'info'
+        },
+        ...current.logs
+      ].slice(0, 120)
+    }));
   }, []);
 
   if (loadState.loading) {
@@ -476,6 +559,7 @@ export default function App() {
                 onReopenOnboarding={handleReopenOnboarding}
                 onFocusInput={handleFocusInput}
                 onApplyRecommendation={applyRecommendedSetup}
+                onFilesDropped={handleFilesDropped}
               />
             )}
 
@@ -498,6 +582,21 @@ export default function App() {
               />
             )}
 
+            {activeTab === 'history' && (
+              <MemoizedHistoryPanel
+                onLoadHistory={(record) => {
+                  if (record.pdfDir) {
+                    setRunOptions((current) => ({
+                      ...current,
+                      pdfDir: record.pdfDir,
+                      outputDir: record.outputDir || `${record.pdfDir}/output`
+                    }));
+                  }
+                  setActiveTab('analyze');
+                }}
+              />
+            )}
+
             {activeTab === 'analyze' && job.status !== 'idle' && (
               <MemoizedResultsTab
                 job={job}
@@ -508,6 +607,29 @@ export default function App() {
               />
             )}
           </div>
+
+          {job.running && (
+            <div className="progress-panel">
+              <BatchProgressBar
+                completed={job.completed}
+                total={job.total}
+                progressPercent={job.progressPercent || progressPercent}
+                currentFile={job.currentFile}
+                status={job.status}
+                onCancel={cancelAnalysis}
+              />
+              {job.currentStage && (
+                <ProgressIndicator
+                  currentStage={job.currentStage}
+                  stageMessage={job.stageMessage}
+                  currentFile={job.currentFile}
+                  completedCount={job.completed}
+                  totalCount={job.total}
+                  progressPercent={job.progressPercent || progressPercent}
+                />
+              )}
+            </div>
+          )}
 
           <div className="panel-footer">
             <div className="progress-info">

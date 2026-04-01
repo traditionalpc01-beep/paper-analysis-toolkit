@@ -2,6 +2,23 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
+import {
+  addHistoryRecord,
+  getHistoryList,
+  getHistoryRecord,
+  deleteHistoryRecord,
+  clearHistory
+} from './historyManager.js';
+import {
+  addFeedbackRecord,
+  getFeedbackList,
+  getFeedbackRecord,
+  deleteFeedbackRecord,
+  clearFeedback,
+  updateOriginalJsonFile,
+  exportFeedbackToJson,
+  getFeedbackStats
+} from './feedbackManager.js';
 
 const isDev = !app.isPackaged;
 let mainWindow = null;
@@ -296,6 +313,12 @@ ipcMain.handle('analysis:start', async (_event, payload) => {
 
   validateAnalysisPayload(payload);
 
+  const analysisContext = {
+    pdfDir: payload.pdfDir || '',
+    outputDir: payload.outputDir || '',
+    mode: payload.mode || 'auto'
+  };
+
   return new Promise((resolve, reject) => {
     const { child, launch } = spawnBackend('analyze', payload, payload?.engine || {});
     activeAnalysisProcess = child;
@@ -317,7 +340,19 @@ ipcMain.handle('analysis:start', async (_event, payload) => {
           if (['completed', 'failed', 'cancelled'].includes(event.type)) {
             sawTerminalEvent = true;
           }
-          emitAnalysisEvent({ ...event, launch });
+          
+          if (event.type === 'completed') {
+            const historyRecord = addHistoryRecord({
+              ...analysisContext,
+              stats: event.stats,
+              files: event.files || [],
+              status: event.stats?.status || 'completed'
+            });
+            emitAnalysisEvent({ ...event, launch, historyId: historyRecord.id });
+          } else {
+            emitAnalysisEvent({ ...event, launch });
+          }
+          
           if (!started && ['started', 'completed', 'failed'].includes(event.type)) {
             started = true;
             resolve({ ok: true, launch });
@@ -394,6 +429,66 @@ ipcMain.handle('shell:show-item', async (_event, targetPath) => {
   }
   shell.showItemInFolder(targetPath);
   return true;
+});
+
+ipcMain.handle('history:list', async (_event, options = {}) => {
+  return getHistoryList(options);
+});
+
+ipcMain.handle('history:get', async (_event, recordId) => {
+  return getHistoryRecord(recordId);
+});
+
+ipcMain.handle('history:delete', async (_event, recordId) => {
+  return deleteHistoryRecord(recordId);
+});
+
+ipcMain.handle('history:clear', async () => {
+  return clearHistory();
+});
+
+ipcMain.handle('feedback:save', async (_event, params) => {
+  const record = addFeedbackRecord(params);
+  
+  if (params.outputDir && params.modifiedItem) {
+    const updateResult = updateOriginalJsonFile({
+      outputDir: params.outputDir,
+      file: params.originalItem?.file,
+      modifiedItem: params.modifiedItem
+    });
+    
+    return {
+      success: true,
+      record,
+      jsonUpdate: updateResult
+    };
+  }
+  
+  return { success: true, record };
+});
+
+ipcMain.handle('feedback:list', async (_event, options = {}) => {
+  return getFeedbackList(options);
+});
+
+ipcMain.handle('feedback:get', async (_event, recordId) => {
+  return getFeedbackRecord(recordId);
+});
+
+ipcMain.handle('feedback:delete', async (_event, recordId) => {
+  return deleteFeedbackRecord(recordId);
+});
+
+ipcMain.handle('feedback:clear', async () => {
+  return clearFeedback();
+});
+
+ipcMain.handle('feedback:export', async (_event, options = {}) => {
+  return exportFeedbackToJson(options);
+});
+
+ipcMain.handle('feedback:stats', async () => {
+  return getFeedbackStats();
 });
 
 app.whenReady().then(() => {

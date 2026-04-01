@@ -52,6 +52,7 @@ class AnalysisPipeline:
         output_dir: Union[str, Path],
         config: Optional[Dict[str, Any]] = None,
         cache_dir: Union[str, Path] = ".cache",
+        template_id: Optional[str] = None,
     ):
         """
         初始化分析管线
@@ -60,6 +61,7 @@ class AnalysisPipeline:
             output_dir: 输出目录
             config: 完整配置字典（包含 mineru, llm, cleaner 等配置）
             cache_dir: 缓存目录
+            template_id: 提取模板ID，支持 'oled', 'solar_cell', 'battery', 'sensor'
         """
         self.config = config or {}
         self.output_dir = Path(output_dir)
@@ -80,8 +82,9 @@ class AnalysisPipeline:
         # 初始化文本清洗器
         self.cleaner = SectionFilter(self.config.get("cleaner", {}))
 
-        # 初始化数据提取器
-        self.extractor = DataExtractor(config=self.config)
+        # 初始化数据提取器（支持模板选择）
+        self.template_id = template_id or self.config.get("template_id", "oled")
+        self.extractor = DataExtractor(config=self.config, template_id=self.template_id)
 
         # 初始化 Web 检索器
         web_config = self.config.get("web_search", {})
@@ -168,6 +171,7 @@ class AnalysisPipeline:
         pdf_path: Path,
         max_pages: Optional[int] = None,
         use_cache: bool = True,
+        progress_callback: Optional[Any] = None,
     ) -> Tuple[Optional[PaperData], Optional[Dict[str, Any]]]:
         """
         处理单个 PDF 文件（v3.0 流程）
@@ -183,6 +187,7 @@ class AnalysisPipeline:
             pdf_path: PDF 文件路径
             max_pages: 最大读取页数
             use_cache: 是否使用缓存
+            progress_callback: 进度回调函数，签名为 callback(stage: str, message: str)
 
         Returns:
             (提取结果, 错误信息)
@@ -191,9 +196,13 @@ class AnalysisPipeline:
         pdf_name = pdf_path.name
         md5 = calculate_md5(pdf_path) if self.enable_cache else ""
 
-        # Step 1: 检查缓存
+        if progress_callback:
+            progress_callback("parsing", "正在检查缓存...")
+
         if self.enable_cache and use_cache and self.cache_manager.has_data_cache(md5):
             self.logger.info(f"[CacheHit] {pdf_name}")
+            if progress_callback:
+                progress_callback("parsing", "从缓存加载...")
             cached_result = self.cache_manager.load_data_cache(md5)
             if cached_result:
                 try:
@@ -220,6 +229,7 @@ class AnalysisPipeline:
             md5=md5,
             use_cache=use_cache,
             start_time=start_time,
+            progress_callback=progress_callback,
         )
 
     def _extract_from_parse_result(
@@ -229,10 +239,14 @@ class AnalysisPipeline:
         md5: str,
         use_cache: bool,
         start_time: Optional[float] = None,
+        progress_callback: Optional[Any] = None,
     ) -> Tuple[Optional[PaperData], Optional[Dict[str, Any]]]:
         """对解析后的 Markdown 执行清洗、提取、校验与缓存。"""
         pdf_name = pdf_path.name
         start_time = start_time or time.time()
+
+        if progress_callback:
+            progress_callback("cleaning", "正在清洗文本...")
 
         self.logger.info(
             f"[Debug] markdown length: {len(parse_result.markdown) if parse_result.markdown else 0}"
@@ -258,6 +272,9 @@ class AnalysisPipeline:
                 "TextCleaning",
                 pdf_path=str(pdf_path),
             )
+
+        if progress_callback:
+            progress_callback("extracting", "正在提取结构化数据...")
 
         extraction_result = self.extractor.extract(
             markdown_text=parse_result.markdown,
@@ -286,11 +303,15 @@ class AnalysisPipeline:
                 self.wos_if_fetcher,
             ]
         ):
+            if progress_callback:
+                progress_callback("fetching_if", "正在获取影响因子...")
             self._supplement_impact_factor(paper_data, journal_resolution)
         if self._needs_lite_backfill(paper_data):
             self.logger.info(
                 f"[LLM] lite backfill triggered: {pdf_name} | missing={','.join(self._collect_missing_core_fields(paper_data))}"
             )
+            if progress_callback:
+                progress_callback("extracting", "正在补充缺失字段...")
             paper_data = self.extractor.lite_backfill_paper_info(
                 paper_data,
                 extraction_text,
@@ -306,7 +327,12 @@ class AnalysisPipeline:
                     self.wos_if_fetcher,
                 ]
             ):
+                if progress_callback:
+                    progress_callback("fetching_if", "正在获取影响因子...")
                 self._supplement_impact_factor(paper_data, journal_resolution)
+
+        if progress_callback:
+            progress_callback("validating", "正在验证数据...")
 
         if self.enable_cache and use_cache:
             self.cache_manager.save_data_cache(md5, paper_data.model_dump())
