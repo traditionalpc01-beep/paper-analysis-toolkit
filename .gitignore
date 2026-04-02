@@ -36,6 +36,7 @@ desktop/node_modules/
 输出结果/
 desktop/dist/
 desktop/release/
+desktop/backend/
 out_*/
 tmp_*/
 .learnings/

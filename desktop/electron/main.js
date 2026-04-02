@@ -30,7 +30,7 @@ function appIconPath() {
 
 function bundledBackendPath() {
   if (isDev) {
-    return path.resolve(__dirname, '..', '..', 'dist', 'PaperInsightBackend.exe');
+    return path.resolve(__dirname, '..', 'backend', 'PaperInsightBackend.exe');
   }
   return path.join(process.resourcesPath, 'backend', 'PaperInsightBackend.exe');
 }

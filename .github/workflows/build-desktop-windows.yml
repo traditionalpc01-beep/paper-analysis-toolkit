@@ -62,6 +62,14 @@ jobs:
             exit 1
           fi
 
+      - name: Copy backend to desktop directory
+        shell: bash
+        run: |
+          mkdir -p desktop/backend
+          cp dist/PaperInsightBackend.exe desktop/backend/
+          echo "✓ Backend copied to desktop/backend/"
+          ls -la desktop/backend/
+
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm install

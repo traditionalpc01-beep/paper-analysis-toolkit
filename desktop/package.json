@@ -45,7 +45,7 @@
     ],
     "extraResources": [
       {
-        "from": "../dist/PaperInsightBackend.exe",
+        "from": "backend/PaperInsightBackend.exe",
         "to": "backend/PaperInsightBackend.exe"
       }
     ],
