@@ -46,8 +46,7 @@
     "extraResources": [
       {
         "from": "../dist/PaperInsightBackend.exe",
-        "to": "backend/PaperInsightBackend.exe",
-        "filter": ["**/*"]
+        "to": "backend/PaperInsightBackend.exe"
       }
     ],
     "win": {

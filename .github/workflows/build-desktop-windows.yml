@@ -49,6 +49,19 @@ jobs:
       - name: Build desktop backend executable
         run: python scripts/build_windows_exe.py --target desktop-backend --version "${{ steps.version.outputs.value }}"
 
+      - name: Verify backend executable
+        shell: bash
+        run: |
+          if [ -f "dist/PaperInsightBackend.exe" ]; then
+            echo "✓ Backend executable found: dist/PaperInsightBackend.exe"
+            ls -la dist/PaperInsightBackend.exe
+          else
+            echo "✗ Backend executable not found!"
+            echo "Contents of dist directory:"
+            ls -la dist/ || echo "dist directory does not exist"
+            exit 1
+          fi
+
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm install
@@ -56,6 +69,8 @@ jobs:
       - name: Build Windows desktop installer
         working-directory: desktop
         run: npm run dist:win
+        env:
+          DEBUG: electron-builder
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
