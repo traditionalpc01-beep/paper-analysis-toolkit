@@ -1,0 +1,101 @@
+name: build-desktop-macos
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'paperinsight/**'
+      - 'desktop/**'
+      - 'scripts/build_executable.py'
+      - '.github/workflows/build-desktop-macos.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-desktop:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION=$(python -c "exec(open('paperinsight/__init__.py').read()); print(__version__)")
+          echo "value=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Build desktop backend executable
+        run: python scripts/build_executable.py --target desktop-backend --version "${{ steps.version.outputs.value }}"
+
+      - name: Verify backend executable
+        run: |
+          if [ -f "dist/PaperInsightBackend" ]; then
+            echo "✓ Backend executable found: dist/PaperInsightBackend"
+            ls -la dist/PaperInsightBackend
+          else
+            echo "✗ Backend executable not found!"
+            echo "Contents of dist directory:"
+            ls -la dist/ || echo "dist directory does not exist"
+            exit 1
+          fi
+
+      - name: Copy backend to desktop directory
+        run: |
+          mkdir -p desktop/backend
+          cp dist/PaperInsightBackend desktop/backend/
+          echo "✓ Backend copied to desktop/backend/"
+          ls -la desktop/backend/
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm install
+
+      - name: Build macOS desktop app
+        working-directory: desktop
+        run: npm run dist:mac
+        env:
+          DEBUG: electron-builder
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PaperInsight-macOS-${{ steps.version.outputs.value }}
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.zip
+          retention-days: 30
+
+      - name: Publish release assets
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          name: PaperInsight v${{ steps.version.outputs.value }}
+          draft: false
+          prerelease: false
+          files: |
+            desktop/release/*.dmg
+            desktop/release/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
