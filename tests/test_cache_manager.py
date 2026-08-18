@@ -82,7 +82,8 @@ def test_cache_current_version_loads_successfully(tmp_path):
     loaded = cache.load_data_cache(md5)
     assert loaded is not None
     assert loaded["paper_info"]["title"] == "Current Paper"
-    assert loaded["_cache_version"] == CACHE_SCHEMA_VERSION
+    # 加载结果不应携带 _cache_* 元信息键（下游用 PaperData(extra='forbid') 反序列化）
+    assert not any(k.startswith("_cache_") for k in loaded)
 
 
 def test_cache_future_version_returns_none(tmp_path):
@@ -151,3 +152,43 @@ def test_clear_specific_cache(tmp_path):
 
     assert cache.has_data_cache("md5_a") is False
     assert cache.has_data_cache("md5_b") is True
+
+
+# ── P0 回归：数据缓存 round-trip ───────────────────────────
+
+
+def test_cache_roundtrip_preserves_paper_data(tmp_path):
+    """save -> load round-trip 后的数据必须能通过 PaperData(extra='forbid') 反序列化。
+
+    回归防护：历史缺陷是 save 注入的 _cache_* 键残留在 load 结果中，
+    导致 pipeline 的 PaperData(**cached_result) 永远抛 ValidationError，
+    数据缓存形同虚设（每次都重新调 MinerU/LLM）。
+    """
+    from paperinsight.models.schemas import PaperData
+
+    cache = CacheManager(tmp_path)
+    md5 = "roundtrip_test"
+
+    original = PaperData()
+    original.paper_info.title = "InP Quantum Dot LEDs"
+    original.paper_info.journal_name = "Nature Photonics"
+
+    cache.save_data_cache(md5, original.model_dump())
+    loaded = cache.load_data_cache(md5)
+
+    assert loaded is not None
+    restored = PaperData(**loaded)  # extra='forbid' 下不得抛 ValidationError
+    assert restored.paper_info.title == "InP Quantum Dot LEDs"
+    assert restored.paper_info.journal_name == "Nature Photonics"
+
+
+def test_save_data_cache_does_not_mutate_caller_dict(tmp_path):
+    """save 不应把 _cache_* 元信息键写进调用方传入的 dict。"""
+    cache = CacheManager(tmp_path)
+    data = {"paper_info": {"title": "X"}}
+
+    cache.save_data_cache("md5_mut", data)
+
+    assert "_cache_timestamp" not in data
+    assert "_cache_md5" not in data
+    assert "_cache_version" not in data

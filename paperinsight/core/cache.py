@@ -149,8 +149,10 @@ class CacheManager:
             )
             return None
 
-        return data
-    
+        # 剥离缓存元信息键：PaperData 等模型为 extra='forbid'，
+        # 残留 _cache_* 键会导致反序列化 ValidationError（缓存永不命中）
+        return {k: v for k, v in data.items() if not k.startswith("_cache_")}
+
     def save_data_cache(self, md5: str, data: dict) -> Path:
         """
         保存完整数据缓存
@@ -164,7 +166,8 @@ class CacheManager:
         """
         cache_path = self.get_data_cache_path(md5)
 
-        # 添加缓存元信息
+        # 在副本上添加缓存元信息，避免污染调用方传入的 dict
+        data = dict(data)
         data["_cache_timestamp"] = datetime.now().isoformat()
         data["_cache_md5"] = md5
         data["_cache_version"] = CACHE_SCHEMA_VERSION

@@ -283,8 +283,7 @@ class LongcatClient(BaseLLM):
             json_match = re.search(r'\{[\s\S]*\}', content)
             if json_match:
                 return json.loads(json_match.group())
-            
-                raise ValueError(f"Could not extract JSON from response: {content[:200]}")
+            raise ValueError(f"Could not extract JSON from response: {content[:200]}")
         
         except json.JSONDecodeError as e:
             raise ValueError(f"JSON parse failed: {e}") from e
