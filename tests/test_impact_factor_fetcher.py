@@ -2,8 +2,19 @@ from __future__ import annotations
 
 from collections import deque
 
+import pytest
+
+from paperinsight.web import impact_factor_fetcher
 from paperinsight.web.impact_factor_fetcher import MJLImpactFactorFetcher
 from paperinsight.web.journal_resolver import MJLJournalCandidate
+
+
+@pytest.fixture(autouse=True)
+def _clear_if_cache():
+    """IF_CACHE 是模块级缓存，测试间必须清空，避免相互污染。"""
+    impact_factor_fetcher.IF_CACHE.clear()
+    yield
+    impact_factor_fetcher.IF_CACHE.clear()
 
 
 class DummyResponse:
@@ -101,6 +112,30 @@ def test_fetcher_parses_jif_key_with_embedded_year():
     assert result.status == "OK"
     assert result.year == 2024
     assert result.impact_factor == 49.9
+
+
+def test_fetcher_prefers_latest_jif_year_over_older_higher_value():
+    session = DummySession(
+        [
+            DummyResponse(
+                {
+                    "journalProfile": {
+                        "indicators": {
+                            "jif2024": "11.2",
+                            "jif2023": "15.8",
+                        }
+                    }
+                }
+            )
+        ]
+    )
+    fetcher = MJLImpactFactorFetcher(session=session)
+
+    result = fetcher.lookup(_candidate())
+
+    assert result.status == "OK"
+    assert result.year == 2024
+    assert result.impact_factor == 11.2
 
 
 def test_fetcher_marks_not_visible_when_profile_has_no_jif_data():

@@ -5,6 +5,7 @@
 
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
@@ -32,6 +33,9 @@ class ReportGenerator:
         ("文件地址 URL", "url"),
         ("期刊名称 Journal", "journal"),
         ("影响因子 Impact Factor", "impact_factor"),
+        ("影响因子年份 IF Year", "impact_factor_year"),
+        ("影响因子来源 IF Source", "impact_factor_source"),
+        ("影响因子状态 IF Status", "impact_factor_status"),
         ("作者 Authors", "authors"),
         ("处理结果/简述 Processing Status", "processing_status"),
         ("论文标题 Title", "title"),
@@ -82,6 +86,20 @@ class ReportGenerator:
         "lifetime_source": ("寿命原文", "lifetime_source"),
         "structure_source": ("结构原文", "structure_source"),
     }
+
+    @classmethod
+    def empty_result_row(cls, *, file_name: str = "", file_url: str = "", processing_status: str = "") -> dict:
+        """构造一个与 REPORT_COLUMNS 列定义一致的空行字典。
+
+        当 PDF 处理失败时，使用此方法生成错误行，确保列名始终与报表定义同步。
+        """
+        row: dict = {}
+        for _, field_key in cls.REPORT_COLUMNS:
+            row[field_key] = ""
+        row["file"] = file_name
+        row["url"] = file_url
+        row["processing_status"] = processing_status
+        return row
     
     def __init__(self, output_dir: Union[str, Path]):
         """
@@ -174,6 +192,9 @@ class ReportGenerator:
             "url": 45,
             "journal": 28,
             "impact_factor": 16,
+            "impact_factor_year": 14,
+            "impact_factor_source": 24,
+            "impact_factor_status": 22,
             "authors": 25,
             "processing_status": 34,
             "title": 50,
@@ -258,7 +279,19 @@ class ReportGenerator:
             return json.dumps(value, ensure_ascii=False)
 
         if field_key == "impact_factor":
+            if value in (None, ""):
+                return ""
             return self._coerce_if_value(value)
+
+        if field_key == "impact_factor_year":
+            if value in (None, ""):
+                return ""
+            if isinstance(value, int):
+                return value
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return str(value)
 
         return str(value) if value not in (None, "") else ""
     
@@ -349,7 +382,7 @@ class ReportGenerator:
 
     def _build_default_filename(self, extension: str) -> str:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_name = f"paperinsight_report_{timestamp}"
+        base_name = f"论文分析报告_{timestamp}"
         return f"{base_name}.{extension}"
 
     def _build_unique_output_path(self, output_filename: str) -> Path:
@@ -372,7 +405,7 @@ class ReportGenerator:
             return float(value)
 
         if isinstance(value, str):
-            match = __import__("re").search(r"([0-9]+(?:\.[0-9]+)?)", value)
+            match = re.search(r"([0-9]+(?:\.[0-9]+)?)", value)
             if match:
                 return float(match.group(1))
 

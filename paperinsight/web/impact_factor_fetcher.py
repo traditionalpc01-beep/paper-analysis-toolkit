@@ -3,12 +3,14 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Optional, Dict, List
 from urllib.parse import urlencode
 
 import requests
 
 from paperinsight.utils.journal_metadata import canonicalize_journal_title
+from paperinsight.web.http_client import create_retryable_session
 from paperinsight.web.journal_resolver import MJLJournalCandidate
 
 # 影响因子数据缓存
@@ -30,13 +32,22 @@ class MJLImpactFactorFetcher:
     PROFILE_API_URL = "https://mjl.clarivate.com/api/mjl/jprof/restricted/seqno/{seqno}"
     JCR_DEEP_LINK_URL = "https://mjl.clarivate.com/api/censub/restricted/jcr-deep-link/{seqno}"
 
+    # CURATED_FALLBACK 年份超过此阈值（年）则标记为 STALE
+    STALE_YEAR_THRESHOLD = 2
+
+    @staticmethod
+    def _current_jcr_year() -> int:
+        """当前 JCR 年份：当年 6 月前取上一年，6 月后取当年。"""
+        now = datetime.now()
+        return now.year - 1 if now.month < 6 else now.year
+
     def __init__(
         self,
         timeout: int = 30,
         session: Optional[requests.Session] = None,
     ) -> None:
         self.timeout = timeout
-        self.session = session or requests.Session()
+        self.session = session or create_retryable_session(timeout=timeout)
         self.session.headers.setdefault(
             "User-Agent",
             (
@@ -124,72 +135,75 @@ class MJLImpactFactorFetcher:
             )
 
         profile_url = self._build_profile_api_url(candidate)
-        results = []
-        
-        # 尝试从MJL API获取数据
+
+        # 请求 MJL Profile API（瞬时服务端错误重试），记录最终 HTTP 状态
+        response = None
+        request_error: Optional[str] = None
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = self.session.get(profile_url, timeout=self.timeout)
-                
-                if response.status_code in {401, 403}:
-                    break
-                if response.status_code == 404:
-                    break
-                if response.status_code >= 400:
-                    if attempt < max_retries - 1:
-                        time.sleep(1)
-                        continue
-                    break
-
-                data = response.json()
-                parsed = self._extract_impact_factor(data)
-                if parsed is not None:
-                    year, impact_factor = parsed
-                    if 0.1 <= impact_factor <= 200:
-                        results.append({
-                            'source': 'MJL_PROFILE_API',
-                            'url': profile_url,
-                            'impact_factor': impact_factor,
-                            'year': year
-                        })
-                break
             except requests.RequestException as e:
+                request_error = str(e)
                 if attempt < max_retries - 1:
                     time.sleep(1)
                     continue
                 break
+            # 401/403/404 等终态状态不重试；仅瞬时 5xx 重试
+            if response.status_code >= 500 and attempt < max_retries - 1:
+                time.sleep(1)
+                continue
+            break
 
-        # 尝试实时网络搜索验证
-        web_result = self._web_search_verification(candidate.display_title)
-        if web_result:
-            results.append(web_result)
-
-        # 尝试使用fallback数据
-        fallback_result = self._fallback_lookup(candidate, status="NOT_VISIBLE", default_url=profile_url)
-        if fallback_result.impact_factor:
-            results.append({
-                'source': 'CURATED_FALLBACK',
-                'url': fallback_result.source_url,
-                'impact_factor': fallback_result.impact_factor,
-                'year': fallback_result.year
-            })
-
-        # 交叉验证并选择最佳结果
-        if results:
-            best_result = self._cross_validate(results)
-            # 更新缓存
-            if canonical_title:
-                self._update_cache(canonical_title, best_result)
-            return ImpactFactorLookupResult(
-                status="OK",
-                source_name=best_result['source'],
-                source_url=best_result['url'],
-                impact_factor=best_result['impact_factor'],
-                year=best_result['year'],
+        if response is None:
+            return self._fallback_lookup(
+                candidate,
+                status="ERROR",
+                default_url=profile_url,
+                error_message=request_error or "network request failed",
             )
 
-        return fallback_result
+        if response.status_code in {401, 403}:
+            return self._fallback_lookup(
+                candidate,
+                status="NO_ACCESS",
+                default_url=profile_url,
+                error_message="Profile endpoint requires an authenticated MJL session.",
+            )
+        if response.status_code == 404:
+            return self._fallback_lookup(candidate, status="NO_MATCH", default_url=profile_url)
+        if response.status_code >= 400:
+            return self._fallback_lookup(
+                candidate,
+                status="ERROR",
+                default_url=profile_url,
+                error_message=f"HTTP {response.status_code}",
+            )
+
+        data = response.json()
+        parsed = self._extract_impact_factor(data)
+        if parsed is not None:
+            year, impact_factor = parsed
+            result = ImpactFactorLookupResult(
+                status="OK",
+                source_name="MJL_PROFILE_API",
+                source_url=profile_url,
+                impact_factor=impact_factor,
+                year=year,
+            )
+            if canonical_title:
+                self._update_cache(
+                    canonical_title,
+                    {
+                        'source': result.source_name,
+                        'url': result.source_url,
+                        'impact_factor': result.impact_factor,
+                        'year': result.year,
+                    },
+                )
+            return result
+
+        return self._fallback_lookup(candidate, status="NOT_VISIBLE", default_url=profile_url)
 
     def lookup_by_title(self, journal_title: Optional[str]) -> ImpactFactorLookupResult:
         canonical_title = canonicalize_journal_title(journal_title)
@@ -234,8 +248,13 @@ class MJLImpactFactorFetcher:
             best_result = self._cross_validate(results)
             # 更新缓存
             self._update_cache(canonical_title, best_result)
+            status = "OK"
+            if best_result['source'] == 'CURATED_FALLBACK':
+                year = best_result.get('year')
+                if year is not None and self._current_jcr_year() - year > self.STALE_YEAR_THRESHOLD:
+                    status = "OK_STALE"
             return ImpactFactorLookupResult(
-                status="OK",
+                status=status,
                 source_name=best_result['source'],
                 source_url=best_result['url'],
                 impact_factor=best_result['impact_factor'],
@@ -288,8 +307,11 @@ class MJLImpactFactorFetcher:
             )
 
         impact_factor, year, source_url = fallback
+        status = "OK"
+        if year is not None and self._current_jcr_year() - year > self.STALE_YEAR_THRESHOLD:
+            status = "OK_STALE"
         return ImpactFactorLookupResult(
-            status="OK",
+            status=status,
             source_name="CURATED_FALLBACK",
             source_url=source_url,
             impact_factor=impact_factor,
